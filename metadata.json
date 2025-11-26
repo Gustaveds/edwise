@@ -1,0 +1,5 @@
+{
+  "name": "Plataforma EAD EdWise AI",
+  "description": "Um assistente educacional com IA para plataformas EAD (ensino a distância). Permite que professores enviem materiais de curso (vídeos, PDFs) e oferece aos alunos um chatbot de IA para responder perguntas, gerar quizzes e receber suporte de aprendizado personalizado.",
+  "requestFramePermissions": []
+}

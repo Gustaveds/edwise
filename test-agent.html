@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Backend Agent</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        input,
+        button {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            font-size: 14px;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        #response {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            min-height: 50px;
+            white-space: pre-wrap;
+        }
+
+        .success {
+            color: #28a745;
+            font-weight: bold;
+        }
+
+        .error {
+            color: #dc3545;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🧪 Test Backend Agent</h1>
+        <input type="text" id="message" placeholder="Digite sua mensagem" value="Olá, teste de conexão">
+        <input type="text" id="courseId" placeholder="Course ID" value="123">
+        <button onclick="testAgent()">Enviar para Backend</button>
+        <div id="response"></div>
+    </div>
+
+    <script>
+        async function testAgent() {
+            const message = document.getElementById('message').value;
+            const courseId = document.getElementById('courseId').value;
+            const responseDiv = document.getElementById('response');
+
+            responseDiv.innerHTML = 'Enviando...';
+
+            try {
+                const response = await fetch('http://localhost:3001/api/agent', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message, courseId }),
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    responseDiv.innerHTML = `<span class="success">✅ Sucesso!</span>\n\nResposta:\n${JSON.stringify(data, null, 2)}`;
+                } else {
+                    responseDiv.innerHTML = `<span class="error">❌ Erro ${response.status}</span>\n\n${JSON.stringify(data, null, 2)}`;
+                }
+            } catch (error) {
+                responseDiv.innerHTML = `<span class="error">❌ Erro de conexão</span>\n\n${error.message}`;
+            }
+        }
+    </script>
+</body>
+
+</html>

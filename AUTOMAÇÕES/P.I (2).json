@@ -1,0 +1,3279 @@
+{
+  "name": "P.I",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Enable the pgvector extension to work with embedding vectors\nCREATE EXTENSION IF NOT EXISTS vector;\n-- Create a table to store your documents\ncreate table documents (\n  id bigserial primary key,\n  content text, -- corresponds to Document.pageContent\n  metadata jsonb, -- corresponds to Document.metadata\n  embedding vector(1536) -- 1536 works for OpenAI embeddings, change if needed\n);\n\n-- Create a function to search for documents\ncreate function match_documents (\n  query_embedding vector(1536),\n  match_count int default null,\n  filter jsonb DEFAULT '{}'\n) returns table (\n  id bigint,\n  content text,\n  metadata jsonb,\n  similarity float\n)\nlanguage plpgsql\nas $$\n#variable_conflict use_column\nbegin\n  return query\n  select\n    id,\n    content,\n    metadata,\n    1 - (documents.embedding <=> query_embedding) as similarity\n  from documents\n  where metadata @> filter\n  order by documents.embedding <=> query_embedding\n  limit match_count;\nend;\n$$;\n",
+        "options": {}
+      },
+      "id": "2d525d25-f644-44ed-83c3-bf2ca99b01ef",
+      "name": "setar_supabase_tabelas_vectoriais",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2512,
+        1552
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Tratamento para o RAG",
+        "height": 120,
+        "width": 2220
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -144,
+        528
+      ],
+      "id": "838b6272-67ec-4857-abb4-1d0d9ebd3944",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "jsCode": "function parseSRT(srtText) {\n    const regex = /(\\d+)\\s+(\\d{2}):(\\d{2}):(\\d{2}),(\\d{3}) --> (\\d{2}):(\\d{2}):(\\d{2}),(\\d{3})\\s+([\\s\\S]*?)(?=\\s+\\d+\\s+\\d{2}:\\d{2}:\\d{2},\\d{3}|\\s*$)/g;\n    let groupedByMinute = {};\n\n    let match;\n    while ((match = regex.exec(srtText)) !== null) {\n        let index = match[1]; // Subtitle index\n        let startHour = parseInt(match[2], 10);\n        let startMinute = parseInt(match[3], 10);\n        let startSecond = parseInt(match[4], 10);\n        let startMs = parseInt(match[5], 10);\n        let endTime = `${match[6]}:${match[7]}:${match[8]},${match[9]}`;\n        let text = match[10].replace(/\\s+/g, ' ').trim(); // Normalize text spacing\n\n        let totalMinutes = startHour * 60 + startMinute; // Convert HH:MM to integer minute\n\n        if (!groupedByMinute[totalMinutes]) {\n            groupedByMinute[totalMinutes] = [];\n        }\n\n        groupedByMinute[totalMinutes].push({\n            time: `${match[2]}:${match[3]}:${match[4]},${match[5]} --> ${endTime}`,\n            text: text\n        });\n    }\n\n    return groupedByMinute;\n}\n\nconst srtContent = $('video').all()[0].json.captions;\nconst parsedSrt = parseSRT(srtContent);\n\nreturn { parsedSrt };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        784
+      ],
+      "id": "604ef45d-3a91-4a60-b258-b12ecaa12ab9",
+      "name": "parsedSrt"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=<SRT>\n{{ $json.captions }}\n</SRT>",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Voce é um analista de texto experiente e sua função é criar um resumo do vídeo que está em <SRT>. Crie um resumo destacando os pincipáis tópicos abordados, as principais ferramentas, utilidade, passo a passo. O resumo deve ser direcionado a pessoas que estão iniciando seus desenvolvimentos em automação e agentes de IA. Escreva no formato Markdown. Seja objetivo, a mensagem do resumo tem que ser concisa e apenas identificar de forma fidedigna o conteudo em si. Do not start with \"```markdown\""
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        320,
+        784
+      ],
+      "id": "13579525-3cb7-46c2-8848-c681d66f81d1",
+      "name": "resumo"
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "limit": 1,
+        "where": {
+          "values": [
+            {
+              "column": "yt_id",
+              "value": "={{ $('video').item.json.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1504,
+        864
+      ],
+      "id": "ab96d672-a928-459b-af9e-e608e02e9ae2",
+      "name": "get_video",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "parsedSrt",
+        "include": "allOtherFields",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        800,
+        784
+      ],
+      "id": "81fb4763-8f01-49eb-8504-2d6b2585d4d0",
+      "name": "minutos"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        992,
+        784
+      ],
+      "id": "a9582535-0edd-4ac1-a4e6-53a2543355b4",
+      "name": "minuto",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=<SRT>\n{{ $json.parsedSrt.map((text, index) => `\n${index+1}\n\n${text.time}\n${text.text}\n`) }}\n</SRT>",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=<RESUMO_VIDEO>\n{{ $('resumo').item.json.text }}\n</RESUMO_VIDEO>\n\n<TITULO_VIDEO>\n{{ $('video').item.json.title }}\n</TITULO_VIDEO>\n\n\n# Sua função\nVocê é um analista de texto experiente. Sua função é analisar o texto em <SRT>. Tendo em consideração também o <RESUMO_VIDEO> e <TITULO_VIDEO>, crie várias perguntas baseado em como que O aluno iria perguntar. Juntamente com a pergunta, indique em qual minuto e segundo do vídeo estará a resposta, utilizando o formato &t do YouTube. Exemplo t=15m10s e includa esta informação na chave \"tempo\".\n\n# Objetivo\nSeu objetivo é analisar com precisão o texto e contexto e criar perguntas cuja a resposta está indicada neste tempo. Apenas crie perguntas que sejam relevantes para este tempo. Tenha também como referencia o <RESUMO_VIDEO> e <TITULO_VIDEO> para analisar perguntas que tenham relação a eles também.\n\n# Variações\nCrie variações de perguntas baseado no <TITULO_VIDEO> e <RESUMO_VIDEO> caso faça sentido. Caso não fizer sentido, não crie as variações.\n\n# Evite\nNão crie perguntas cuja a resposta não esteja presente em <SRT>.\nNão começe a resposta com \"```json\". Responda apenas usando o formato em JSON.\n\n# Formato\nResponda apenas utilizando o formato JSON, sem aspas, sem \"```json\" no começo e sem \"```\" no final. Utilize a Schema abaixo:\n[\n    {\n        \"pergunta\": string,\n        \"tempo\": string\n    }\n]"
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        1184,
+        864
+      ],
+      "id": "bb8eb1ad-2929-471b-8264-edc0682291fb",
+      "name": "perguntas"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1"
+        },
+        "options": {
+          "temperature": 0
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1168,
+        1088
+      ],
+      "id": "a2405b60-9ccf-4938-ba1c-1999012c2f59",
+      "name": "OpenAI Chat Model3",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const faq = $('get_video').first().json.faq_captions.faq;\n\nconst perguntas = JSON.parse($('perguntas').first().json.text);\n\nconst perguntasComTitulo = perguntas.map(item => ({ ...item, pergunta: `No vídeo ${$input.first().json.title}. ${item.pergunta}` }))\n\nreturn [{ faq: [...faq, ...perguntasComTitulo] }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        864
+      ],
+      "id": "78616a17-7ccc-4c36-8e75-eed68b6a9c7c",
+      "name": "merge_perguntas"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "yt_id": "={{ $('get_video').item.json.yt_id }}",
+            "faq_captions": "={{ $('merge_perguntas').item.json }}"
+          },
+          "matchingColumns": [
+            "yt_id"
+          ],
+          "schema": [
+            {
+              "id": "yt_id",
+              "displayName": "yt_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "thumbnail",
+              "displayName": "thumbnail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "captions",
+              "displayName": "captions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "faq_captions",
+              "displayName": "faq_captions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "published_at",
+              "displayName": "published_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1824,
+        864
+      ],
+      "id": "4f9f01fb-01df-4cfd-b671-47463df3f2b3",
+      "name": "update_faq",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "limit": 1,
+        "where": {
+          "values": [
+            {
+              "column": "yt_id",
+              "value": "={{ $json.body.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        128,
+        784
+      ],
+      "id": "6d97d91b-c960-4a50-9610-82abfb7b6a66",
+      "name": "video",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.faq_captions.faq.map(faq => `${faq.pergunta} tempo: ${faq.tempo}`) }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "metadata",
+                "value": "={ \"video_url\": \"{{ $json.url }}\", \"video_id\": \"{{ $json.yt_id }}\" }"
+              }
+            ]
+          }
+        }
+      },
+      "id": "2972c9a4-8aa4-427b-8a24-52f545e4ab6b",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1,
+      "position": [
+        432,
+        1968
+      ]
+    },
+    {
+      "parameters": {
+        "chunkSize": 1500,
+        "chunkOverlap": 100,
+        "options": {}
+      },
+      "id": "cf118d08-154c-4b08-adf4-e8210b5a35a4",
+      "name": "Recursive Character Text Splitter",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        480,
+        2112
+      ]
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-large",
+        "options": {
+          "dimensions": 1536
+        }
+      },
+      "id": "1a829d42-c7ec-42d4-b709-117cebdd82ca",
+      "name": "Embeddings OpenAI",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1,
+      "position": [
+        272,
+        2000
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "limit": 1,
+        "where": {
+          "values": [
+            {
+              "column": "yt_id",
+              "value": "={{ $json.body.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        144,
+        1808
+      ],
+      "id": "03c69038-8346-49f6-9451-9bd5258b7d28",
+      "name": "video1",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bf857838-207e-4f4b-8f4c-d3a329fe6b18",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        1808
+      ],
+      "id": "8bbf55e4-8ba5-4eac-9bfe-d97bcaaf39b1",
+      "name": "Webhook",
+      "webhookId": "bf857838-207e-4f4b-8f4c-d3a329fe6b18"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"success\": true\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        784,
+        1792
+      ],
+      "id": "d2bb8d63-e86a-442f-8ad8-6f4135d2f502",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "65454564aawdaw-awdawaw64565",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        784
+      ],
+      "id": "5c2021a8-5d9b-4760-9798-1e222e416ac1",
+      "name": "Webhook1",
+      "webhookId": "bf857838-207e-4f4b-8f4c-d3a329fe6b18"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"success\": true\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1520,
+        672
+      ],
+      "id": "afdbccd6-3b39-485b-b3c3-d645d3ede82e",
+      "name": "Respond to Webhook1"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1"
+        },
+        "options": {
+          "temperature": 0
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        304,
+        960
+      ],
+      "id": "3d6a0f66-c8b4-45e9-9fc5-cba27450ecd9",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1168,
+        672
+      ],
+      "id": "a8d8a027-e0ce-4958-960f-7fb93bc68c08",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "content": "## Setar tabelas",
+        "height": 80,
+        "width": 580
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2432,
+        1424
+      ],
+      "id": "c218da91-3057-4147-a65e-9024a17cfe45",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "create table public.videos (\n  yt_id character varying not null,\n  title character varying null,\n  thumbnail character varying null,\n  captions text null,\n  faq_captions jsonb null,\n  url character varying null,\n  published_at timestamp without time zone null,\n  created_at timestamp with time zone not null default now(),\n  constraint videos_pkey primary key (yt_id)\n) TABLESPACE pg_default;",
+        "options": {}
+      },
+      "id": "d456d8af-c94a-4057-9273-e7da2c1f31f4",
+      "name": "setar_tabela_de_videos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2784,
+        1552
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Criar vetores",
+        "height": 100,
+        "width": 2220,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        1600
+      ],
+      "id": "e4babe6a-bf4b-4cae-8481-98599f451d32",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "## Criar descrição do vídeo",
+        "height": 100,
+        "width": 2220,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -128,
+        2480
+      ],
+      "id": "3105383e-0c7f-4914-bcd2-8d387fbddf24",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "limit": 1,
+        "where": {
+          "values": [
+            {
+              "column": "yt_id",
+              "value": "={{ $json.body.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        192,
+        2640
+      ],
+      "id": "efa43e0a-7724-4877-bcc9-5f8dfb643a6a",
+      "name": "Postgres2",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=<title>\n{{ $json.title }}\n</title>\n<captions>\n{{ $json.captions }}\n</captions>\n<faq>\n{{ JSON.stringify($json.faq_captions) }}\n</faq>",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=Você é um resumidor de vídeo do YouTube experiente. Voce possui também muita experiencia em programação e desenvolvimento de automacão e agentes de IA usando o n8n. \n\nSua função é criar um resumo do vídeo e listar todas as ferrametnas utilizadas no vídeo e em qual tempo ela foi mencionada e coloar uma breve descrição da ferramenta.\n\nEvite listar a plataforma n8n na lista de ferramentas. \n\nEscreva a sua resposta no formato MARKDOWN seguindo o template abaixo:\n\n# Titulo do vídeo\n\n# Resumo\n\n# Ferramentas\n- ferramenta 1, breve descrição, t=2m47s\n...\n\n\n<exemplo1>\n# Multi Agente IA - Ofir - Módulo Asaas. P10\n\n## Resumo\nNeste vídeo, é mostrado como integrar o módulo financeiro Asaas com um sistema multiagente criado no n8n. Passo a passo, o apresentador demonstra como criar e configurar um ambiente de sandbox no Asaas, gerar clientes, emitir cobranças via Pix, receber notificações de pagamento por webhook e, por fim, integrar essas chamadas no fluxo do agente financeiro. Também são explicados detalhes sobre como evitar a duplicação de clientes na base, como retornar o ID do cliente e do pagamento, e, por fim, como testar toda essa automação usando o Postman.\n\n## Ferramentas\n- Asaas (t=0m06s)  \n  Plataforma de pagamentos utilizada para criar clientes, gerar cobranças via Pix e receber notificações de pagamento.  \n- Global Constant Node (t=3m34s)  \n  Plugin (Community Node) do n8n que permite armazenar e gerenciar variáveis globais, como chaves de API.  \n- Postman (t=30m07s)  \n  Aplicação utilizada para testar requisições HTTP (APIs), facilitando a criação e listagem de clientes/ pagamentos no fluxo.  \n</exemplo1>\n<exemplo2>\n# Agentes de IA para Iniciantes. Parte 2. Template Free.\n\n## Resumo\nNeste vídeo, o instrutor demonstra como criar um fluxo de trabalho no n8n para gerenciar dados de produtos e compras. Ele explica como adicionar e manipular informações, filtrá-las com base em condições (por exemplo, se um cliente usou ou não cupom de desconto) e como exportar os dados filtrados para uma planilha Excel. A aula aborda:  \n• Criação e edição de objetos JSON no n8n para simular produtos e clientes.  \n• Uso do node “Switch” para separar o fluxo de dados com base na condição do produto comprado.  \n• Uso do node “If” para filtrar apenas as compras que atendem a determinado critério (p. ex., quem não usou cupom).  \n• Uso do node “Set” para modificar ou excluir campos antes de exportar.  \n• Uso do node “ConvertToFile” para transformar dados em um arquivo XLSX.  \n\nNo final, fica claro como estruturar e automatizar processos, dividindo dados em ramificações lógicas e exportando tudo em um formato facilmente compartilhável.\n\n## Ferramentas\nonde todo o processo é construído.  \n- Switch (t=3m19s):  \n  Node que permite dividir o fluxo do n8n em diferentes rotas, conforme o valor de um campo específico.  \n- If (t=6m10s):  \n  Node condicional que filtra os dados de acordo com a regra escolhida (por exemplo, compras sem desconto).  \n- Set (t=9m08s):  \n  Node usado para criar, alterar ou remover campos de um objeto antes de prosseguir no fluxo.  \n- ConvertToFile (t=12m17s):  \n  Node que converte dados JSON em arquivos de diversos formatos, incluindo XLSX, para facilitar a exportação de relatórios.\n</exemplo2>"
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        704,
+        2640
+      ],
+      "id": "9669af7e-5936-4e46-b299-ff64cf1b75aa",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        592,
+        3088
+      ],
+      "id": "27fc9945-6eea-4e65-bbfa-02bc863a975a",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "yt_id": "={{ $('Postgres2').item.json.yt_id }}",
+            "descricao": "={{ $json.text }}"
+          },
+          "matchingColumns": [
+            "yt_id"
+          ],
+          "schema": [
+            {
+              "id": "yt_id",
+              "displayName": "yt_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "thumbnail",
+              "displayName": "thumbnail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "captions",
+              "displayName": "captions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "faq_captions",
+              "displayName": "faq_captions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "published_at",
+              "displayName": "published_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "descricao",
+              "displayName": "descricao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1072,
+        2640
+      ],
+      "id": "a0293419-142a-4b8c-8de3-51d8fc1bfd67",
+      "name": "Postgres3",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Webhook2').item.json.body?.data?.message?.conversation || $('Webhook2').item.json.body?.data?.message?.ephemeralMessage?.message?.extendedTextMessage?.contextInfo?.quotedMessage?.ephemeralMessage?.message?.extendedTextMessage?.text || $('Webhook2').item.json.body?.data?.message?.ephemeralMessage?.message?.extendedTextMessage?.text }}",
+        "options": {
+          "systemMessage": "=# Quem você é:\nVocê é o assistente de IA da EdWise uma comunidade focada em desenvolvimento de Agentes de IA.\n\n# Sua função:\nSua função é usar a tool RAG para localizar respostas nos vídeos da EdWise e responder os clientes com a resposta + o link do youtube agregando o &t=<tempo> no final da URL aonde <tempo> é o valor da chave \"tempo\" que vier no json. \n\n# Onde encontrar a URL do vídeo:\nA URL estará na chave \"metadata\" em video_url.\n\n# Chamar a tool \"buscar_srt\" sempre que possível:\nQuando encontrar o vídeo pela TOOL RAG. Sempre utilize tool buscar_srt com o video_id para buscar o SRT do video e responder o usuário com precisao e tambem para indicar a URL e o tempo corretamente.\n\n# Referenciar os videos\nUse a lista abaixo para referencia de todos os videos disponiveis e video_id caso o usuario faça uma pergunta sobre um vídeo específico.\n\n# Formato de link:\nQuando colocar o link de videos, não use nenhum formato em volta do link, apenas coloque o link no texto. Não use [] ou () entre um link.\n\n# Use a tool \"buscar_srt\"\nUse a tool \"buscar_srt\" para buscar o texto inteiro de um vídeo caso ainda haja dúvidas nas informações fornecidas pela tool \"RAG\". APenas utilize uma única vez.\n\n# Guidelines\nColoque até no máximo 2 links que seja sobre o que o user está perguntando.\nResponde de forma simples, objetiva e curtas com no máximo 300 caracteres.\n\n<videos>\n{{ $json.videos.map(video => `\n<video>\n  <title>${video.title}</title>\n  <video_id>${video.yt_id}</video_id>\n</video>\n`) }}\n</videos>\n\nResponda com formatacão para o WhatsApp."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        3552,
+        192
+      ],
+      "id": "1e0f0f30-d416-48d0-83dd-210cd4fcc83c",
+      "name": "AI Agent",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Usar para puxar os dados de SRT completo do video via video_id da tool RAG",
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "limit": 1,
+        "where": {
+          "values": [
+            {
+              "column": "yt_id",
+              "value": "={{ $fromAI('video_id', 'o ID do video que veio do RAG') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.5,
+      "position": [
+        4064,
+        432
+      ],
+      "id": "33aad508-efc3-47c4-9dcf-22ecb3db0687",
+      "name": "buscar_srt",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "videos",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        3344,
+        192
+      ],
+      "id": "1004f111-eae4-4881-bd8b-3b8d4f68d89c",
+      "name": "videos"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "heyead",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        2512,
+        752
+      ],
+      "id": "0de0e644-487d-457d-a6e6-da9d54bb0e30",
+      "name": "Webhook2",
+      "webhookId": "be7bc18a-9254-4960-b01b-fa4025fbffd3"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "112239ad-7e99-4028-bce4-4b41ab52a803",
+              "leftValue": "={{ $json.body?.data?.message?.conversation || $json.body?.data?.message?.ephemeralMessage?.message?.extendedTextMessage?.text }}",
+              "rightValue": "#tessa",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2688,
+        752
+      ],
+      "id": "2100c84d-6dfa-421e-9338-acacb90a4efe",
+      "name": "auth"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "Select yt_id, title FROM videos;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3120,
+        192
+      ],
+      "id": "b586c933-f667-4a95-8160-6c334d0d4397",
+      "name": "listar_videos",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "=heydinastia_{{ $('auth').item.json.body.data.key.remoteJid }}",
+        "sessionTTL": 300
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+      "typeVersion": 1.4,
+      "position": [
+        3648,
+        400
+      ],
+      "id": "15e78873-b952-4da1-ad85-bc170259305d",
+      "name": "Redis Chat Memory",
+      "credentials": {
+        "redis": {
+          "id": "to7MvJtlZzc6OkNN",
+          "name": "TPR"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Rodando no WhatsApp",
+        "height": 80,
+        "width": 1780
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2464,
+        592
+      ],
+      "id": "fa4e7cdf-6242-4557-9c6d-bbb0d9ad7fa1",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ed449ad9-2fbc-4527-837d-a9eabc9f1b4d",
+              "name": "ngrok",
+              "value": "https://8f501b5da11c.ngrok-free.app",
+              "type": "string"
+            },
+            {
+              "id": "ca685b0f-06ca-4145-b43a-cbfb44268d81",
+              "name": "videoUrl:",
+              "value": "={{ $json.body.videoUrl }}",
+              "type": "string"
+            },
+            {
+              "id": "0c85b41e-43b6-4334-8e75-f03cd76ea453",
+              "name": "language",
+              "value": "\"pt\"",
+              "type": "string"
+            },
+            {
+              "id": "83f5b707-b9e2-4802-a0e3-ce3e3ad78a93",
+              "name": "autoTranslate",
+              "value": "false",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        288,
+        128
+      ],
+      "id": "1ce14568-e1c7-4331-a2e4-adedf419f250",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "abc",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        64,
+        128
+      ],
+      "id": "8cc71a6b-f714-40a1-afc6-d56264322ad2",
+      "name": "Webhook4",
+      "webhookId": "e8998ac9-45a0-4a9d-a665-f1cdbd5f874a"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": "documents",
+        "options": {
+          "columnNames": {
+            "values": {
+              "contentColumnName": "content"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.1,
+      "position": [
+        368,
+        1760
+      ],
+      "id": "24d19b6d-50da-48d1-97f9-e4f7abc3f4d8",
+      "name": "Postgres PGVector Store1",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "yt_id": "={{ $json.video_id }}",
+            "title": "={{ $json.title }}",
+            "thumbnail": "={{ $json.thumbnail }}",
+            "captions": "={{ $json.raw_transcript }}",
+            "url": "=https://www.youtube.com/watch?v={{ $json.video_id }}",
+            "faq_captions": "={ \"faq\": [] }",
+            "published_at": "={{ $json.published_at }}"
+          },
+          "matchingColumns": [
+            "yt_id"
+          ],
+          "schema": [
+            {
+              "id": "yt_id",
+              "displayName": "yt_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "thumbnail",
+              "displayName": "thumbnail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "captions",
+              "displayName": "captions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "faq_captions",
+              "displayName": "faq_captions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "published_at",
+              "displayName": "published_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        128
+      ],
+      "id": "2631f153-87d4-474f-b97f-759c9cb24f8e",
+      "name": "inserir_video_bd1",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.ngrok }}/transcript",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": \"{{ $json[\"videoUrl:\"] }}\",\n  \"language\": \"pt\",\n  \"auto_translate\": false\n} ",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        512,
+        128
+      ],
+      "id": "f99a00b5-9bdd-4bf5-8392-b7a5986e686a",
+      "name": "buscar_info_videos"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"sucess\": \"Adicionado com sucesso\"\n  \n}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1168,
+        128
+      ],
+      "id": "8543cd45-7dcb-41a6-8661-61ae59aa0c06",
+      "name": "Respond to Webhook2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://webhooks.orbitsync.com.br/webhook/65454564aawdaw-awdawaw64565",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "yt_id",
+              "value": "={{ $json.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        944,
+        128
+      ],
+      "id": "fca66ea0-7094-4327-829f-33ea536b9a07",
+      "name": "tratamento_para_rag"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://webhooks.orbitsync.com.br/webhook/bf857838-207e-4f4b-8f4c-d3a329fe6b18",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "yt_id",
+              "value": "={{ $('Webhook1').item.json.body.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        672
+      ],
+      "id": "fc2d67e7-26ae-4f56-b547-0483ba618c58",
+      "name": "criar_vetores"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"success\": true\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1264,
+        2640
+      ],
+      "id": "1b9eed51-565a-4d8f-8a60-84b86b320264",
+      "name": "Respond to Webhook3"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://evo.orbitsync.com.br/message/sendText/tpr",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $('auth').item.json.body.data.key.remoteJid }}\",\n  \"delay\": 2000,\n  \"text\": \"{{ $json.output.replace(/\\n/g, '\\\\n').replace(/\\\"/g, '\\\\\\\\\"').replace(/\\*/g, '').replace(/\\s+/g, ' ').trim() }}\"\n}\n",
+        "options": {}
+      },
+      "id": "66466e6f-0b5f-4557-9610-3341c290a2a9",
+      "name": "Enviar Mensagem WhatsApp Lead6",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        3920,
+        192
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VQNcyvrdEIG6NkPT",
+          "name": "Evolution"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "content": "## RECEBE ARQUIVOS DO FRONT",
+        "height": 80,
+        "width": 1360
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "146b491b-8cde-4641-a4ed-f3bbb33a9030",
+      "name": "Sticky Note6"
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolName": "documents",
+        "toolDescription": "Faça uma busca pelo tema que foi lhe perguntado e trará o link correspondente que está no metadada",
+        "tableName": "documents",
+        "topK": 25,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.1,
+      "position": [
+        3792,
+        432
+      ],
+      "id": "14899653-cd19-4782-b076-95e068d2bc2d",
+      "name": "Postgres PGVector Store2",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3728,
+        608
+      ],
+      "id": "1908e15d-4aca-4437-b3e3-bd0e5857ae68",
+      "name": "Embeddings OpenAI1",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "public": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        3056,
+        2512
+      ],
+      "id": "c83102e3-8fec-455a-adfa-d3afe31621a6",
+      "name": "When chat message received",
+      "webhookId": "cda66298-83f8-4fcb-95e7-8ff85d01fc38"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('When chat message received').item.json.chatInput }}",
+        "options": {
+          "systemMessage": "=# Quem você é:\nVocê é o assistente de IA da EdWise uma comunidade focada em desenvolvimento de Agentes de IA.\n\n# Sua função:\nSua função é usar a tool RAG para localizar respostas nos vídeos da EdWise e responder os clientes com a resposta + o link do youtube agregando o &t=<tempo> no final da URL aonde <tempo> é o valor da chave \"tempo\" que vier no json. \n\n# Onde encontrar a URL do vídeo:\nA URL estará na chave \"metadata\" em video_url.\n\n# Chamar a tool \"buscar_srt\" sempre que possível:\nQuando encontrar o vídeo pela TOOL RAG. Sempre utilize tool buscar_srt com o video_id para buscar o SRT do video e responder o usuário com precisao e tambem para indicar a URL e o tempo corretamente.\n\n# Referenciar os videos\nUse a lista abaixo para referencia de todos os videos disponiveis e video_id caso o usuario faça uma pergunta sobre um vídeo específico.\n\n# Formato de link:\nQuando colocar o link de videos, não use nenhum formato em volta do link, apenas coloque o link no texto. Não use [] ou () entre um link.\n\n# Use a tool \"buscar_srt\"\nUse a tool \"buscar_srt\" para buscar o texto inteiro de um vídeo caso ainda haja dúvidas nas informações fornecidas pela tool \"RAG\". APenas utilize uma única vez.\n\n# Guidelines\nColoque até no máximo 2 links que seja sobre o que o user está perguntando.\nResponde de forma simples, objetiva e curtas com no máximo 300 caracteres.\n\n<videos>\n{{ $json.videos.map(video => `\n<video>\n  <title>${video.title}</title>\n  <video_id>${video.yt_id}</video_id>\n</video>\n`) }}\n</videos>\n\nResponda com formatacão para o WhatsApp.\n\nSempre forneça o link da aula que responde a dúvida do aluno"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        3664,
+        2512
+      ],
+      "id": "477c56db-6127-47f4-8d40-d0d63c1ece72",
+      "name": "AI Agent1",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Usar para puxar os dados de SRT completo do video via video_id da tool RAG",
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "limit": 1,
+        "where": {
+          "values": [
+            {
+              "column": "yt_id",
+              "value": "={{ $fromAI('video_id', 'o ID do video que veio do RAG') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.5,
+      "position": [
+        4192,
+        2752
+      ],
+      "id": "f97a6a72-d18f-4f20-bc53-5b35e921484c",
+      "name": "buscar_srt1",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "videos",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        3472,
+        2512
+      ],
+      "id": "21748962-c41d-4f0b-89a2-59555b82a99d",
+      "name": "videos1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "Select yt_id, title FROM videos;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3248,
+        2512
+      ],
+      "id": "457f9420-4e95-48fd-81f6-3a31a612a13e",
+      "name": "listar_videos1",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "=heytessa{{ $('When chat message received').item.json.sessionId }}",
+        "sessionTTL": 300
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+      "typeVersion": 1.4,
+      "position": [
+        3776,
+        2720
+      ],
+      "id": "58c5afa1-8044-4ad7-bd19-6d7d539e03d0",
+      "name": "Redis Chat Memory1",
+      "credentials": {
+        "redis": {
+          "id": "to7MvJtlZzc6OkNN",
+          "name": "TPR"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolName": "documents",
+        "toolDescription": "Faça uma busca pelo tema que foi lhe perguntado e trará o link correspondente que está no metadada",
+        "tableName": "documents",
+        "topK": 25,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.1,
+      "position": [
+        3904,
+        2752
+      ],
+      "id": "ba86b0d7-c0ae-492c-b63c-a76fb4390063",
+      "name": "Postgres PGVector Store",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3856,
+        2928
+      ],
+      "id": "f418b150-9cb0-4ca9-b158-ac1e32ae322e",
+      "name": "Embeddings OpenAI2",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash-preview-04-17",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        672,
+        2864
+      ],
+      "id": "d5c079dd-a45c-4c9c-8a6d-6a90f6451f24",
+      "name": "Google Gemini Chat Model2",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "pMR2T6grewPQOAfV",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://webhooks.orbitsync.com.br/webhook/c1bcc88e-7d88-46f6-ac5a-840b95efeb3e",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "yt_id",
+              "value": "={{ $('video1').item.json.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1024,
+        1792
+      ],
+      "id": "172e38cc-26d0-4d53-9879-a9f4257c7c9a",
+      "name": "criar_descricao",
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "c1bcc88e-7d88-46f6-ac5a-840b95efeb3e",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        2640
+      ],
+      "id": "bd5f06c3-711a-4e41-9ee1-655ea0ab8f08",
+      "name": "Webhook3",
+      "webhookId": "c1bcc88e-7d88-46f6-ac5a-840b95efeb3e",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3472,
+        432
+      ],
+      "id": "2bb28fff-40b6-406d-8687-21ba770b5e20",
+      "name": "OpenAI Chat Model2",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3584,
+        2720
+      ],
+      "id": "f2915c39-5bee-42c1-a629-5bd3432a2f83",
+      "name": "OpenAI Chat Model4",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        4032,
+        2512
+      ],
+      "id": "d910cac0-1840-463f-a573-251b40225317",
+      "name": "No Operation, do nothing"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Webhook8').item.json.body.message }}",
+        "options": {
+          "systemMessage": "=# Quem você é:\nVocê é o assistente de IA da EdWise uma comunidade focada em desenvolvimento de Agentes de IA.\n\n# Sua função:\nSua função é usar a tool RAG para localizar respostas nos vídeos da EdWise e responder os clientes com a resposta + o link do youtube agregando o &t=<tempo> no final da URL aonde <tempo> é o valor da chave \"tempo\" que vier no json. \n\n# Onde encontrar a URL do vídeo:\nA URL estará na chave \"metadata\" em video_url.\n\n# Chamar a tool \"buscar_srt\" sempre que possível:\nQuando encontrar o vídeo pela TOOL RAG. Sempre utilize tool buscar_srt com o video_id para buscar o SRT do video e responder o usuário com precisao e tambem para indicar a URL e o tempo corretamente.\n\n# Referenciar os videos\nUse a lista abaixo para referencia de todos os videos disponiveis e video_id caso o usuario faça uma pergunta sobre um vídeo específico.\n\n# Formato de link:\nQuando colocar o link de videos, não use nenhum formato em volta do link, apenas coloque o link no texto. Não use [] ou () entre um link.\n\n# Use a tool \"buscar_srt\"\nUse a tool \"buscar_srt\" para buscar o texto inteiro de um vídeo caso ainda haja dúvidas nas informações fornecidas pela tool \"RAG\". APenas utilize uma única vez.\n\n# Guidelines\nColoque até no máximo 2 links que seja sobre o que o user está perguntando.\nResponde de forma simples, objetiva e curtas com no máximo 300 caracteres.\n\n<videos>\n{{ $json.videos.map(video => `\n<video>\n  <title>${video.title}</title>\n  <video_id>${video.yt_id}</video_id>\n</video>\n`) }}\n</videos>\n\nResponda com formatacão para o WhatsApp.\n\nSempre forneça o link da aula que responde a dúvida do aluno e verifique o melhor tempo do vídeo que responde a dúvida siga a formatação em minutos e segundos ex \"t=7m50s\" ou \"t=0m11s\""
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        3600,
+        3232
+      ],
+      "id": "62a73980-105a-4a56-8491-8ce2dcc0bb08",
+      "name": "AI Agent2",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Usar para puxar os dados de SRT completo do video via video_id da tool RAG",
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "limit": 1,
+        "where": {
+          "values": [
+            {
+              "column": "yt_id",
+              "value": "={{ $fromAI('video_id', 'o ID do video que veio do RAG') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.5,
+      "position": [
+        4144,
+        3488
+      ],
+      "id": "6fd54242-6bee-4742-9086-6e5c424020be",
+      "name": "buscar_srt2",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "videos",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        3424,
+        3248
+      ],
+      "id": "2f5a5e78-51e4-41b9-8be6-70b55c21df86",
+      "name": "videos2"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "Select yt_id, title FROM videos;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3200,
+        3248
+      ],
+      "id": "49b33cf3-4f48-4ad3-a60a-fed3bc287ef2",
+      "name": "listar_videos2",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Webhook8').item.json.headers['x-real-ip'] }}",
+        "sessionTTL": 300
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+      "typeVersion": 1.4,
+      "position": [
+        3712,
+        3472
+      ],
+      "id": "ad3c7848-c3cf-47e9-b387-e3933902ad9f",
+      "name": "Redis Chat Memory2",
+      "credentials": {
+        "redis": {
+          "id": "to7MvJtlZzc6OkNN",
+          "name": "TPR"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolName": "documents",
+        "toolDescription": "Faça uma busca pelo tema que foi lhe perguntado e trará o link correspondente que está no metadada",
+        "tableName": "documents",
+        "topK": 25,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.1,
+      "position": [
+        3856,
+        3488
+      ],
+      "id": "3f75749d-735e-4b18-b929-3e14ac1cdf1e",
+      "name": "Postgres PGVector Store4",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3792,
+        3664
+      ],
+      "id": "16b8c0ea-aeae-438e-880c-7791f933eb20",
+      "name": "Embeddings OpenAI4",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3376,
+        3408
+      ],
+      "id": "14f889a4-0ce3-4522-b4ef-2d88aa0777a4",
+      "name": "OpenAI Chat Model6",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chat123",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        2960,
+        3248
+      ],
+      "id": "b454cd6f-99b4-475c-9768-c52012ae3626",
+      "name": "Webhook8",
+      "webhookId": "438a4133-215b-41e5-92fb-aecb0768aea7"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.3,
+      "position": [
+        4352,
+        3248
+      ],
+      "id": "9a35459f-60ec-4ac0-b08c-6914912ad8bf",
+      "name": "Respond to Webhook7"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Supondo que o output da IA está em item.json.output\nfunction parseLinks(text) {\n  const urlRegex = /(https?:\\/\\/[^\\s]+)/g;\n  return text.replace(urlRegex, url => `<a href=\"${url}\" target=\"_blank\">${url}</a>`);\n}\n\n// Ajuste conforme o nome do campo de saída da IA:\nconst respostaBruta = $json.output || \"Desculpe, não entendi.\";\n\n// Aplica o parseLinks na resposta da IA\nreturn [\n  {\n    json: {\n      reply: parseLinks(respostaBruta)\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4112,
+        3248
+      ],
+      "id": "e29f557a-526a-4e3f-b5be-7bd9ed3b30df",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Usar para puxar os dados de SRT completo do video via video_id da tool RAG",
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "limit": 1,
+        "where": {
+          "values": [
+            {
+              "column": "yt_id",
+              "value": "={{ $fromAI('video_id', 'o ID do video que veio do RAG') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.5,
+      "position": [
+        4192,
+        4256
+      ],
+      "id": "acb3b6f4-d269-4ce3-a197-4cd4d982be6b",
+      "name": "buscar_srt3",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "videos",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        3472,
+        4016
+      ],
+      "id": "b161b246-c29f-410b-be17-7e4f9f61f921",
+      "name": "videos3"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "Select yt_id, title FROM videos;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3264,
+        4016
+      ],
+      "id": "072a8932-6d0e-4aaf-a06a-b075ac55b497",
+      "name": "listar_videos3",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Webhook9').item.json.headers['x-real-ip'] }}",
+        "sessionTTL": 300
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+      "typeVersion": 1.4,
+      "position": [
+        3776,
+        4224
+      ],
+      "id": "28161bdd-0757-43f4-9945-7741b1a9aac2",
+      "name": "Redis Chat Memory3",
+      "credentials": {
+        "redis": {
+          "id": "to7MvJtlZzc6OkNN",
+          "name": "TPR"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolName": "documents",
+        "toolDescription": "Faça uma busca pelo tema que foi lhe perguntado e trará o link correspondente que está no metadada",
+        "tableName": "documents",
+        "topK": 25,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.1,
+      "position": [
+        3920,
+        4256
+      ],
+      "id": "62ed90d3-a855-4c65-8841-104b9c9886ab",
+      "name": "Postgres PGVector Store5",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3856,
+        4432
+      ],
+      "id": "f2b80676-caef-4642-afc0-105291177a57",
+      "name": "Embeddings OpenAI5",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3600,
+        4224
+      ],
+      "id": "3f9a0253-056b-45e0-a676-18d30d8662e4",
+      "name": "OpenAI Chat Model7",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chat12345",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        3024,
+        4016
+      ],
+      "id": "80e5841f-d09a-46ab-8b59-a7c11d1b75e5",
+      "name": "Webhook9",
+      "webhookId": "438a4133-215b-41e5-92fb-aecb0768aea7"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"reply\": \"{{ $json.output.replace(/\\n/g, '\\\\n').replace(/\\\"/g, '\\\\\\\\\"').replace(/\\*/g, '').replace(/\\s+/g, ' ').trim()  }}\"\n} ",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.3,
+      "position": [
+        4144,
+        4016
+      ],
+      "id": "4e619b50-0b49-4016-b49c-c8be91b2c6d4",
+      "name": "Respond to Webhook8"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Webhook9').item.json.body.message }}",
+        "options": {
+          "systemMessage": "=# Quem você é:\nVocê é o assistente de IA da EdWise uma comunidade focada em desenvolvimento de Agentes de IA.\n\n# Sua função:\nSua função é usar a tool RAG para localizar respostas nos vídeos da EdWise e responder os clientes com a resposta + o link do youtube agregando o &t=<tempo> no final da URL aonde <tempo> é o valor da chave \"tempo\" que vier no json. \n\n# Onde encontrar a URL do vídeo:\nA URL estará na chave \"metadata\" em video_url.\n\n# Chamar a tool \"buscar_srt\" sempre que possível:\nQuando encontrar o vídeo pela TOOL RAG. Sempre utilize tool buscar_srt com o video_id para buscar o SRT do video e responder o usuário com precisao e tambem para indicar a URL e o tempo corretamente.\n\n# Referenciar os videos\nUse a lista abaixo para referencia de todos os videos disponiveis e video_id caso o usuario faça uma pergunta sobre um vídeo específico.\n\n# Formato de link:\nQuando colocar o link de videos, não use nenhum formato em volta do link, apenas coloque o link no texto. Não use [] ou () entre um link.\n\n# Use a tool \"buscar_srt\"\nUse a tool \"buscar_srt\" para buscar o texto inteiro de um vídeo caso ainda haja dúvidas nas informações fornecidas pela tool \"RAG\". APenas utilize uma única vez.\n\n# Guidelines\nColoque até no máximo 2 links que seja sobre o que o user está perguntando.\nResponde de forma simples, objetiva e curtas com no máximo 300 caracteres.\n\n<videos>\n{{ $json.videos.map(video => `\n<video>\n  <title>${video.title}</title>\n  <video_id>${video.yt_id}</video_id>\n</video>\n`) }}\n</videos>\n\nResponda com formatacão para o WhatsApp.\n\nSempre forneça o link da aula que responde a dúvida do aluno"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        3680,
+        4016
+      ],
+      "id": "b0498050-6df6-4926-851b-0beab0ba09e0",
+      "name": "AI Agent3",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-1.5-pro",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        3472,
+        3520
+      ],
+      "id": "aca1dec6-271f-4367-b20a-c2398e9ab712",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "pMR2T6grewPQOAfV",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n.dinastia.uk",
+            "user-agent": "axios/1.7.4",
+            "content-length": "17",
+            "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7",
+            "accept-encoding": "gzip, compress, deflate, br",
+            "content-type": "application/json",
+            "x-forwarded-for": "172.18.0.1",
+            "x-forwarded-host": "n8n.dinastia.uk",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "9ba83ca7dbb8",
+            "x-real-ip": "172.18.0.1"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "yt_id": "S9uPNppGsGo"
+          },
+          "webhookUrl": "https://n8n.dinastia.uk/webhook/bf857838-207e-4f4b-8f4c-d3a329fe6b18",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "Webhook1": [
+      {
+        "json": {
+          "headers": {
+            "host": "webhooks.orbitsync.com.br",
+            "user-agent": "axios/1.8.2",
+            "content-length": "23",
+            "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7",
+            "accept-encoding": "gzip, compress, deflate, br",
+            "content-type": "application/json",
+            "x-forwarded-for": "172.18.0.1",
+            "x-forwarded-host": "webhooks.orbitsync.com.br",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik_traefik.1",
+            "x-real-ip": "172.18.0.1"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "yt_id": "hdDHg1p3YVc"
+          },
+          "webhookUrl": "https://webhooks.orbitsync.com.br/webhook/65454564aawdaw-awdawaw64565",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "Webhook3": [
+      {
+        "json": {
+          "headers": {
+            "host": "webhooks.orbitsync.com.br",
+            "user-agent": "axios/1.8.2",
+            "content-length": "23",
+            "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7",
+            "accept-encoding": "gzip, compress, deflate, br",
+            "content-type": "application/json",
+            "x-forwarded-for": "172.18.0.1",
+            "x-forwarded-host": "webhooks.orbitsync.com.br",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik_traefik.1",
+            "x-real-ip": "172.18.0.1"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "yt_id": "VuKvR1J2LQE"
+          },
+          "webhookUrl": "https://webhooks.orbitsync.com.br/webhook/c1bcc88e-7d88-46f6-ac5a-840b95efeb3e",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "Webhook2": [
+      {
+        "json": {
+          "headers": {
+            "host": "webhooks.orbitsync.com.br",
+            "user-agent": "axios/1.7.9",
+            "content-length": "961",
+            "accept-encoding": "gzip, compress, deflate, br",
+            "content-type": "application/json",
+            "x-forwarded-for": "172.18.0.1",
+            "x-forwarded-host": "webhooks.orbitsync.com.br",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik_traefik.1",
+            "x-real-ip": "172.18.0.1"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "event": "messages.upsert",
+            "instance": "tpr",
+            "data": {
+              "key": {
+                "remoteJid": "556392507264@s.whatsapp.net",
+                "fromMe": false,
+                "id": "3FDBE99E44354F519053"
+              },
+              "pushName": "Thiago Patrick",
+              "status": "DELIVERY_ACK",
+              "message": {
+                "messageContextInfo": {
+                  "deviceListMetadata": {
+                    "senderKeyHash": "ZAGXt4opcqUlAw==",
+                    "senderTimestamp": "1748537316",
+                    "recipientKeyHash": "QyZA3Xa+u5FWtw==",
+                    "recipientTimestamp": "1747834914"
+                  },
+                  "deviceListMetadataVersion": 2
+                },
+                "conversation": "#tessa quais os tipos de arquivos python?"
+              },
+              "contextInfo": {
+                "expiration": 0,
+                "ephemeralSettingTimestamp": "0",
+                "disappearingMode": {
+                  "initiator": "CHANGED_IN_CHAT"
+                }
+              },
+              "messageType": "conversation",
+              "messageTimestamp": 1748646855,
+              "instanceId": "47942b2d-2589-45f5-b42c-6afc07cf30e4",
+              "source": "unknown"
+            },
+            "destination": "https://webhooks.orbitsync.com.br/webhook/heyead",
+            "date_time": "2025-05-30T20:14:15.742Z",
+            "sender": "556297013244@s.whatsapp.net",
+            "server_url": "https://evo.orbitsync.com.br",
+            "apikey": "0E7EADE5911D-4A45-ADDE-6D18C4F56564"
+          },
+          "webhookUrl": "https://webhooks.orbitsync.com.br/webhook/heyead",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "Webhook8": [
+      {
+        "json": {
+          "headers": {
+            "host": "webhooks.orbitsync.com.br",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+            "content-length": "16",
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "pt-BR,pt;q=0.6",
+            "content-type": "application/json",
+            "origin": "https://webhooks.orbitsync.com.br",
+            "priority": "u=1, i",
+            "referer": "https://webhooks.orbitsync.com.br/webhook/front2",
+            "sec-ch-ua": "\"Brave\";v=\"137\", \"Chromium\";v=\"137\", \"Not/A)Brand\";v=\"24\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "sec-gpc": "1",
+            "x-forwarded-for": "45.4.96.226",
+            "x-forwarded-host": "webhooks.orbitsync.com.br",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik_traefik.1",
+            "x-real-ip": "45.4.96.226"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "message": "Oi"
+          },
+          "webhookUrl": "https://webhooks.orbitsync.com.br/webhook/chat123",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "Webhook9": [
+      {
+        "json": {
+          "headers": {
+            "host": "webhooks.orbitsync.com.br",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+            "content-length": "49",
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "pt-BR,pt;q=0.8",
+            "content-type": "application/json",
+            "origin": "null",
+            "priority": "u=1, i",
+            "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Brave\";v=\"140\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "cross-site",
+            "sec-gpc": "1",
+            "x-forwarded-for": "179.104.41.62",
+            "x-forwarded-host": "webhooks.orbitsync.com.br",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik_traefik.1",
+            "x-real-ip": "179.104.41.62"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "message": "Como colocar o python no computador"
+          },
+          "webhookUrl": "https://webhooks.orbitsync.com.br/webhook/chat12345",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "Webhook4": [
+      {
+        "json": {
+          "headers": {
+            "host": "webhooks.orbitsync.com.br",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+            "content-length": "138",
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "pt-BR,pt;q=0.8",
+            "content-type": "application/json",
+            "origin": "null",
+            "priority": "u=1, i",
+            "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Brave\";v=\"140\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "cross-site",
+            "sec-gpc": "1",
+            "x-forwarded-for": "179.104.41.62",
+            "x-forwarded-host": "webhooks.orbitsync.com.br",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik_traefik.1",
+            "x-real-ip": "179.104.41.62"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "type": "youtube",
+            "videoUrl": "https://www.youtube.com/watch?v=VuKvR1J2LQE",
+            "videoId": "VuKvR1J2LQE",
+            "timestamp": "2025-09-14T18:10:11.492Z"
+          },
+          "webhookUrl": "https://webhooks.orbitsync.com.br/webhook/abc",
+          "executionMode": "production"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "parsedSrt": {
+      "main": [
+        [
+          {
+            "node": "minutos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "resumo": {
+      "main": [
+        [
+          {
+            "node": "parsedSrt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_video": {
+      "main": [
+        [
+          {
+            "node": "merge_perguntas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "minutos": {
+      "main": [
+        [
+          {
+            "node": "minuto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "minuto": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "perguntas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "perguntas": {
+      "main": [
+        [
+          {
+            "node": "get_video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "perguntas",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "merge_perguntas": {
+      "main": [
+        [
+          {
+            "node": "update_faq",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "update_faq": {
+      "main": [
+        [
+          {
+            "node": "minuto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "video": {
+      "main": [
+        [
+          {
+            "node": "resumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Postgres PGVector Store1",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recursive Character Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Postgres PGVector Store1",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "video1": {
+      "main": [
+        [
+          {
+            "node": "Postgres PGVector Store1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "video1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook1": {
+      "main": [
+        [
+          {
+            "node": "video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "resumo",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "criar_vetores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres2": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Postgres3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Enviar Mensagem WhatsApp Lead6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar_srt": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "videos": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook2": {
+      "main": [
+        [
+          {
+            "node": "auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "auth": {
+      "main": [
+        [
+          {
+            "node": "listar_videos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "listar_videos": {
+      "main": [
+        [
+          {
+            "node": "videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "buscar_info_videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook4": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres PGVector Store1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar_info_videos": {
+      "main": [
+        [
+          {
+            "node": "inserir_video_bd1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "inserir_video_bd1": {
+      "main": [
+        [
+          {
+            "node": "tratamento_para_rag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tratamento_para_rag": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "criar_vetores": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres3": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres PGVector Store2": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI1": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Postgres PGVector Store2",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent1": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar_srt1": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "videos1": {
+      "main": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "listar_videos1": {
+      "main": [
+        [
+          {
+            "node": "videos1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Chat Memory1": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres PGVector Store": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI2": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Postgres PGVector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "listar_videos1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook3": {
+      "main": [
+        [
+          {
+            "node": "Postgres2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model4": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent2": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar_srt2": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "videos2": {
+      "main": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "listar_videos2": {
+      "main": [
+        [
+          {
+            "node": "videos2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Chat Memory2": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres PGVector Store4": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI4": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Postgres PGVector Store4",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model6": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook8": {
+      "main": [
+        [
+          {
+            "node": "listar_videos2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar_srt3": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent3",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "videos3": {
+      "main": [
+        [
+          {
+            "node": "AI Agent3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "listar_videos3": {
+      "main": [
+        [
+          {
+            "node": "videos3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Chat Memory3": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent3",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres PGVector Store5": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent3",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI5": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Postgres PGVector Store5",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model7": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent3",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook9": {
+      "main": [
+        [
+          {
+            "node": "listar_videos3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent3": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "ca74a883-5c62-4a10-a033-638620c92f15",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "95e25c7091914003ffe8f2884a62a16a71f8f2d03a63c1a58e9981fc9e2c452a"
+  },
+  "id": "Jl5at9u0nYDjb3w7",
+  "tags": [
+    {
+      "updatedAt": "2025-11-24T13:07:24.341Z",
+      "createdAt": "2025-11-24T13:07:24.341Z",
+      "id": "kUboSHyDyumVBcM2",
+      "name": "P.I"
+    }
+  ]
+}
