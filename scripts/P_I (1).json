@@ -1,0 +1,2168 @@
+{
+  "name": "P.I",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Enable the pgvector extension to work with embedding vectors\nCREATE EXTENSION IF NOT EXISTS vector;\n-- Create a table to store your documents\ncreate table documents (\n  id bigserial primary key,\n  content text, -- corresponds to Document.pageContent\n  metadata jsonb, -- corresponds to Document.metadata\n  embedding vector(1536) -- 1536 works for OpenAI embeddings, change if needed\n);\n\n-- Create a function to search for documents\ncreate function match_documents (\n  query_embedding vector(1536),\n  match_count int default null,\n  filter jsonb DEFAULT '{}'\n) returns table (\n  id bigint,\n  content text,\n  metadata jsonb,\n  similarity float\n)\nlanguage plpgsql\nas $$\n#variable_conflict use_column\nbegin\n  return query\n  select\n    id,\n    content,\n    metadata,\n    1 - (documents.embedding <=> query_embedding) as similarity\n  from documents\n  where metadata @> filter\n  order by documents.embedding <=> query_embedding\n  limit match_count;\nend;\n$$;\n",
+        "options": {}
+      },
+      "id": "009ec68c-41d0-483a-ba9b-72e940718ed1",
+      "name": "setar_supabase_tabelas_vectoriais",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2660,
+        2120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Tratamento para o RAG",
+        "height": 1060,
+        "width": 2220
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        20,
+        1160
+      ],
+      "id": "48f3b939-e64e-4254-8b3a-1128864e5950",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "jsCode": "function parseSRT(srtText) {\n    const regex = /(\\d+)\\s+(\\d{2}):(\\d{2}):(\\d{2}),(\\d{3}) --> (\\d{2}):(\\d{2}):(\\d{2}),(\\d{3})\\s+([\\s\\S]*?)(?=\\s+\\d+\\s+\\d{2}:\\d{2}:\\d{2},\\d{3}|\\s*$)/g;\n    let groupedByMinute = {};\n\n    let match;\n    while ((match = regex.exec(srtText)) !== null) {\n        let index = match[1]; // Subtitle index\n        let startHour = parseInt(match[2], 10);\n        let startMinute = parseInt(match[3], 10);\n        let startSecond = parseInt(match[4], 10);\n        let startMs = parseInt(match[5], 10);\n        let endTime = `${match[6]}:${match[7]}:${match[8]},${match[9]}`;\n        let text = match[10].replace(/\\s+/g, ' ').trim(); // Normalize text spacing\n\n        let totalMinutes = startHour * 60 + startMinute; // Convert HH:MM to integer minute\n\n        if (!groupedByMinute[totalMinutes]) {\n            groupedByMinute[totalMinutes] = [];\n        }\n\n        groupedByMinute[totalMinutes].push({\n            time: `${match[2]}:${match[3]}:${match[4]},${match[5]} --> ${endTime}`,\n            text: text\n        });\n    }\n\n    return groupedByMinute;\n}\n\nconst srtContent = $('video').all()[0].json.captions;\nconst parsedSrt = parseSRT(srtContent);\n\nreturn { parsedSrt };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        1360
+      ],
+      "id": "eeb3fa71-4145-48ab-9298-051b664444ae",
+      "name": "parsedSrt"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=<SRT>\n{{ $json.captions }}\n</SRT>",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Voce é um analista de texto experiente e sua função é criar um resumo do vídeo que está em <SRT>. Crie um resumo destacando os pincipáis tópicos abordados, as principais ferramentas, utilidade, passo a passo. O resumo deve ser direcionado a pessoas que estão iniciando seus desenvolvimentos em automação e agentes de IA. Escreva no formato Markdown. Seja objetivo, a mensagem do resumo tem que ser concisa e apenas identificar de forma fidedigna o conteudo em si. Do not start with \"```markdown\""
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        480,
+        1360
+      ],
+      "id": "3e37d305-6d62-4458-b5d9-1096ab5450bf",
+      "name": "resumo"
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "limit": 1,
+        "where": {
+          "values": [
+            {
+              "column": "yt_id",
+              "value": "={{ $('video').item.json.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1660,
+        1440
+      ],
+      "id": "f80e398c-fe21-41ad-99f7-19e49c2ca0a0",
+      "name": "get_video",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "parsedSrt",
+        "include": "allOtherFields",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        960,
+        1360
+      ],
+      "id": "85bb35df-0d38-4a74-8f29-2281886226c2",
+      "name": "minutos"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1140,
+        1360
+      ],
+      "id": "5c651c2e-f436-4e75-8ad0-0d0be99b5bf5",
+      "name": "minuto",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=<SRT>\n{{ $json.parsedSrt.map((text, index) => `\n${index+1}\n\n${text.time}\n${text.text}\n`) }}\n</SRT>",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=<RESUMO_VIDEO>\n{{ $('resumo').item.json.text }}\n</RESUMO_VIDEO>\n\n<TITULO_VIDEO>\n{{ $('video').item.json.title }}\n</TITULO_VIDEO>\n\n\n# Sua função\nVocê é um analista de texto experiente. Sua função é analisar o texto em <SRT>. Tendo em consideração também o <RESUMO_VIDEO> e <TITULO_VIDEO>, crie várias perguntas baseado em como que O aluno iria perguntar. Juntamente com a pergunta, indique em qual minuto e segundo do vídeo estará a resposta, utilizando o formato &t do YouTube. Exemplo t=15m10s e includa esta informação na chave \"tempo\".\n\n# Objetivo\nSeu objetivo é analisar com precisão o texto e contexto e criar perguntas cuja a resposta está indicada neste tempo. Apenas crie perguntas que sejam relevantes para este tempo. Tenha também como referencia o <RESUMO_VIDEO> e <TITULO_VIDEO> para analisar perguntas que tenham relação a eles também.\n\n# Variações\nCrie variações de perguntas baseado no <TITULO_VIDEO> e <RESUMO_VIDEO> caso faça sentido. Caso não fizer sentido, não crie as variações.\n\n# Evite\nNão crie perguntas cuja a resposta não esteja presente em <SRT>.\nNão começe a resposta com \"```json\". Responda apenas usando o formato em JSON.\n\n# Formato\nResponda apenas utilizando o formato JSON, sem aspas, sem \"```json\" no começo e sem \"```\" no final. Utilize a Schema abaixo:\n[\n    {\n        \"pergunta\": string,\n        \"tempo\": string\n    }\n]"
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        1340,
+        1440
+      ],
+      "id": "ce2191c8-a78c-4575-afa1-a024a1bdc33d",
+      "name": "perguntas"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1"
+        },
+        "options": {
+          "temperature": 0
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        1660
+      ],
+      "id": "eac9b81e-d7bb-4178-afa6-5b546f942ab5",
+      "name": "OpenAI Chat Model3",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const faq = $('get_video').first().json.faq_captions.faq;\n\nconst perguntas = JSON.parse($('perguntas').first().json.text);\n\nconst perguntasComTitulo = perguntas.map(item => ({ ...item, pergunta: `No vídeo ${$input.first().json.title}. ${item.pergunta}` }))\n\nreturn [{ faq: [...faq, ...perguntasComTitulo] }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        1440
+      ],
+      "id": "eb8ad0a0-0a85-42ef-81d4-6fd645e6108b",
+      "name": "merge_perguntas"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "yt_id": "={{ $('get_video').item.json.yt_id }}",
+            "faq_captions": "={{ $('merge_perguntas').item.json }}"
+          },
+          "matchingColumns": [
+            "yt_id"
+          ],
+          "schema": [
+            {
+              "id": "yt_id",
+              "displayName": "yt_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "thumbnail",
+              "displayName": "thumbnail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "captions",
+              "displayName": "captions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "faq_captions",
+              "displayName": "faq_captions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "published_at",
+              "displayName": "published_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1980,
+        1440
+      ],
+      "id": "98ecfb1c-1592-45a3-aa19-0141725241cc",
+      "name": "update_faq",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "limit": 1,
+        "where": {
+          "values": [
+            {
+              "column": "yt_id",
+              "value": "={{ $json.body.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        120,
+        1360
+      ],
+      "id": "8e3df55e-407b-4fef-ad17-0557cfe9fbf0",
+      "name": "video",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.faq_captions.faq.map(faq => `${faq.pergunta} tempo: ${faq.tempo}`) }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "metadata",
+                "value": "={ \"video_url\": \"{{ $json.url }}\", \"video_id\": \"{{ $json.yt_id }}\" }"
+              }
+            ]
+          }
+        }
+      },
+      "id": "ef8b3738-95fa-415c-ab46-9c37391b4eb5",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1,
+      "position": [
+        580,
+        2540
+      ]
+    },
+    {
+      "parameters": {
+        "chunkSize": 1500,
+        "chunkOverlap": 100,
+        "options": {}
+      },
+      "id": "20d67bd2-c09d-4b78-9915-1ba576e6625c",
+      "name": "Recursive Character Text Splitter",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        640,
+        2680
+      ]
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-large",
+        "options": {
+          "dimensions": 1536
+        }
+      },
+      "id": "dad9bc6e-8348-4950-9acc-6c0d8244c6f9",
+      "name": "Embeddings OpenAI",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1,
+      "position": [
+        420,
+        2580
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "limit": 1,
+        "where": {
+          "values": [
+            {
+              "column": "yt_id",
+              "value": "={{ $json.body.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        300,
+        2380
+      ],
+      "id": "69b91f42-7883-4e08-84c3-c2c8a195c6a1",
+      "name": "video1",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bf857838-207e-4f4b-8f4c-d3a329fe6b18",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        120,
+        2380
+      ],
+      "id": "0147fb7b-8648-4bcd-91b8-6cc51488fd3d",
+      "name": "Webhook",
+      "webhookId": "bf857838-207e-4f4b-8f4c-d3a329fe6b18"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"success\": true\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        940,
+        2360
+      ],
+      "id": "f121e117-db9e-46e8-a1eb-91f6ade79ec0",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "65454564aawdaw-awdawaw64565",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -120,
+        1360
+      ],
+      "id": "4153b12b-ffd6-4927-a980-d913e5c3a537",
+      "name": "Webhook1",
+      "webhookId": "bf857838-207e-4f4b-8f4c-d3a329fe6b18"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"success\": true\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1680,
+        1240
+      ],
+      "id": "162b3fdf-7bc7-4ed9-ab79-ae1106c5820d",
+      "name": "Respond to Webhook1"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1"
+        },
+        "options": {
+          "temperature": 0
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        460,
+        1540
+      ],
+      "id": "8f5a2240-f476-4158-9d45-93de124542bb",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        1240
+      ],
+      "id": "2b98fb28-748a-43f2-a463-43193a58b782",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "content": "## Setar tabelas",
+        "height": 320,
+        "width": 580
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2580,
+        2020
+      ],
+      "id": "971a4378-0503-476c-a294-a5f3e12e95f9",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "create table public.videos (\n  yt_id character varying not null,\n  title character varying null,\n  thumbnail character varying null,\n  captions text null,\n  faq_captions jsonb null,\n  url character varying null,\n  published_at timestamp without time zone null,\n  created_at timestamp with time zone not null default now(),\n  constraint videos_pkey primary key (yt_id)\n) TABLESPACE pg_default;",
+        "options": {}
+      },
+      "id": "a272dd04-5c28-4963-bd25-0d9fb3ccc62d",
+      "name": "setar_tabela_de_videos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2940,
+        2120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Criar vetores",
+        "height": 780,
+        "width": 2220,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        20,
+        2220
+      ],
+      "id": "2cffbc07-35e0-415f-b478-32380258c224",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "## Criar descrição do vídeo",
+        "height": 780,
+        "width": 2220,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        20,
+        3000
+      ],
+      "id": "22a08458-45bc-4404-904f-6d6e6b01e054",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "limit": 1,
+        "where": {
+          "values": [
+            {
+              "column": "yt_id",
+              "value": "={{ $json.body.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        340,
+        3240
+      ],
+      "id": "35a5742a-2102-4057-a5e5-57f9d05903f7",
+      "name": "Postgres2",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "c1bcc88e-7d88-46f6-ac5a-840b95efeb3e",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        3240
+      ],
+      "id": "52ef72ff-a292-4e80-adca-3ec91e188aab",
+      "name": "Webhook3",
+      "webhookId": "c1bcc88e-7d88-46f6-ac5a-840b95efeb3e"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=<title>\n{{ $json.title }}\n</title>\n<captions>\n{{ $json.captions }}\n</captions>\n<faq>\n{{ JSON.stringify($json.faq_captions) }}\n</faq>",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=Você é um resumidor de vídeo do YouTube experiente. Voce possui também muita experiencia em programação e desenvolvimento de automacão e agentes de IA usando o n8n. \n\nSua função é criar um resumo do vídeo e listar todas as ferrametnas utilizadas no vídeo e em qual tempo ela foi mencionada e coloar uma breve descrição da ferramenta.\n\nEvite listar a plataforma n8n na lista de ferramentas. \n\nEscreva a sua resposta no formato MARKDOWN seguindo o template abaixo:\n\n# Titulo do vídeo\n\n# Resumo\n\n# Ferramentas\n- ferramenta 1, breve descrição, t=2m47s\n...\n\n\n<exemplo1>\n# Multi Agente IA - Ofir - Módulo Asaas. P10\n\n## Resumo\nNeste vídeo, é mostrado como integrar o módulo financeiro Asaas com um sistema multiagente criado no n8n. Passo a passo, o apresentador demonstra como criar e configurar um ambiente de sandbox no Asaas, gerar clientes, emitir cobranças via Pix, receber notificações de pagamento por webhook e, por fim, integrar essas chamadas no fluxo do agente financeiro. Também são explicados detalhes sobre como evitar a duplicação de clientes na base, como retornar o ID do cliente e do pagamento, e, por fim, como testar toda essa automação usando o Postman.\n\n## Ferramentas\n- Asaas (t=0m06s)  \n  Plataforma de pagamentos utilizada para criar clientes, gerar cobranças via Pix e receber notificações de pagamento.  \n- Global Constant Node (t=3m34s)  \n  Plugin (Community Node) do n8n que permite armazenar e gerenciar variáveis globais, como chaves de API.  \n- Postman (t=30m07s)  \n  Aplicação utilizada para testar requisições HTTP (APIs), facilitando a criação e listagem de clientes/ pagamentos no fluxo.  \n</exemplo1>\n<exemplo2>\n# Agentes de IA para Iniciantes. Parte 2. Template Free.\n\n## Resumo\nNeste vídeo, o instrutor demonstra como criar um fluxo de trabalho no n8n para gerenciar dados de produtos e compras. Ele explica como adicionar e manipular informações, filtrá-las com base em condições (por exemplo, se um cliente usou ou não cupom de desconto) e como exportar os dados filtrados para uma planilha Excel. A aula aborda:  \n• Criação e edição de objetos JSON no n8n para simular produtos e clientes.  \n• Uso do node “Switch” para separar o fluxo de dados com base na condição do produto comprado.  \n• Uso do node “If” para filtrar apenas as compras que atendem a determinado critério (p. ex., quem não usou cupom).  \n• Uso do node “Set” para modificar ou excluir campos antes de exportar.  \n• Uso do node “ConvertToFile” para transformar dados em um arquivo XLSX.  \n\nNo final, fica claro como estruturar e automatizar processos, dividindo dados em ramificações lógicas e exportando tudo em um formato facilmente compartilhável.\n\n## Ferramentas\nonde todo o processo é construído.  \n- Switch (t=3m19s):  \n  Node que permite dividir o fluxo do n8n em diferentes rotas, conforme o valor de um campo específico.  \n- If (t=6m10s):  \n  Node condicional que filtra os dados de acordo com a regra escolhida (por exemplo, compras sem desconto).  \n- Set (t=9m08s):  \n  Node usado para criar, alterar ou remover campos de um objeto antes de prosseguir no fluxo.  \n- ConvertToFile (t=12m17s):  \n  Node que converte dados JSON em arquivos de diversos formatos, incluindo XLSX, para facilitar a exportação de relatórios.\n</exemplo2>"
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        580,
+        3240
+      ],
+      "id": "7b5dbcff-d64f-41d3-a151-0ae778d6078e",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        3420
+      ],
+      "id": "7913350d-7f76-4425-bfae-f73a6c5067aa",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "yt_id": "={{ $('Postgres2').item.json.yt_id }}",
+            "descricao": "={{ $json.text }}"
+          },
+          "matchingColumns": [
+            "yt_id"
+          ],
+          "schema": [
+            {
+              "id": "yt_id",
+              "displayName": "yt_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "thumbnail",
+              "displayName": "thumbnail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "captions",
+              "displayName": "captions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "faq_captions",
+              "displayName": "faq_captions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "published_at",
+              "displayName": "published_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "descricao",
+              "displayName": "descricao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        940,
+        3240
+      ],
+      "id": "01442bd1-c95c-46e8-8b78-391852e22d9a",
+      "name": "Postgres3",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Webhook2').item.json.body?.data?.message?.conversation || $('Webhook2').item.json.body?.data?.message?.ephemeralMessage?.message?.extendedTextMessage?.contextInfo?.quotedMessage?.ephemeralMessage?.message?.extendedTextMessage?.text || $('Webhook2').item.json.body?.data?.message?.ephemeralMessage?.message?.extendedTextMessage?.text }}",
+        "options": {
+          "systemMessage": "=# Quem você é:\nVocê é o assistente de IA da DinastIA uma comunidade focada em desenvolvimento de Agentes de IA.\n\n# Sua função:\nSua função é usar a tool RAG para localizar respostas nos vídeos da DinastIA e responder os clientes com a resposta + o link do youtube agregando o &t=<tempo> no final da URL aonde <tempo> é o valor da chave \"tempo\" que vier no json. \n\n# Onde encontrar a URL do vídeo:\nA URL estará na chave \"metadata\" em video_url.\n\n# Chamar a tool \"buscar_srt\" sempre que possível:\nQuando encontrar o vídeo pela TOOL RAG. Sempre utilize tool buscar_srt com o video_id para buscar o SRT do video e responder o usuário com precisao e tambem para indicar a URL e o tempo corretamente.\n\n# Referenciar os videos\nUse a lista abaixo para referencia de todos os videos disponiveis e video_id caso o usuario faça uma pergunta sobre um vídeo específico.\n\n# Formato de link:\nQuando colocar o link de videos, não use nenhum formato em volta do link, apenas coloque o link no texto. Não use [] ou () entre um link.\n\n# Use a tool \"buscar_srt\"\nUse a tool \"buscar_srt\" para buscar o texto inteiro de um vídeo caso ainda haja dúvidas nas informações fornecidas pela tool \"RAG\". APenas utilize uma única vez.\n\n# Guidelines\nColoque até no máximo 2 links que seja sobre o que o user está perguntando.\nResponde de forma simples, objetiva e curtas com no máximo 300 caracteres.\n\n<videos>\n{{ $json.videos.map(video => `\n<video>\n  <title>${video.title}</title>\n  <video_id>${video.yt_id}</video_id>\n</video>\n`) }}\n</videos>\n\nResponda com formatacão para o WhatsApp."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        3520,
+        1300
+      ],
+      "id": "b6bc5e8f-464f-4fe0-ac75-55e4ae846246",
+      "name": "AI Agent",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-large",
+        "options": {
+          "dimensions": 1536
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3740,
+        1660
+      ],
+      "id": "e6a2f028-d497-4177-8348-a5a776593eba",
+      "name": "Embeddings OpenAI3",
+      "credentials": {
+        "openAiApi": {
+          "id": "PlulKufgvtvOr03E",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Usar para puxar os dados de SRT completo do video via video_id da tool RAG",
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "limit": 1,
+        "where": {
+          "values": [
+            {
+              "column": "yt_id",
+              "value": "={{ $fromAI('video_id', 'o ID do video que veio do RAG') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.5,
+      "position": [
+        4080,
+        1480
+      ],
+      "id": "5c263b44-6716-4275-b5ea-d002591119fe",
+      "name": "buscar_srt",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "videos",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        3320,
+        1300
+      ],
+      "id": "16157b2f-3f1c-452b-b3ee-58114242a9d8",
+      "name": "videos"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "heypi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        2560,
+        1320
+      ],
+      "id": "6f7f9923-ec25-4d43-baa9-b136a23ab2ec",
+      "name": "Webhook2",
+      "webhookId": "be7bc18a-9254-4960-b01b-fa4025fbffd3"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "112239ad-7e99-4028-bce4-4b41ab52a803",
+              "leftValue": "={{ $json.body?.data?.message?.conversation || $json.body?.data?.message?.ephemeralMessage?.message?.extendedTextMessage?.text }}",
+              "rightValue": "#heypi",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2840,
+        1320
+      ],
+      "id": "51d8aa12-5fc7-4a15-b362-c8c210b2059a",
+      "name": "auth"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "Select yt_id, title FROM videos;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3100,
+        1300
+      ],
+      "id": "a9117ffc-eddf-4c12-910f-c790853de6a1",
+      "name": "listar_videos",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "=heydinastia_{{ $('auth').item.json.body.data.key.remoteJid }}",
+        "sessionTTL": 300
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+      "typeVersion": 1.4,
+      "position": [
+        3620,
+        1520
+      ],
+      "id": "99dad16f-1153-43a1-9e49-5def1c808a57",
+      "name": "Redis Chat Memory",
+      "credentials": {
+        "redis": {
+          "id": "to7MvJtlZzc6OkNN",
+          "name": "TPR"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Rodando no WhatsApp",
+        "height": 700,
+        "width": 1780
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2580,
+        1180
+      ],
+      "id": "23cfe150-8e2e-4b29-8aeb-c0d99b103885",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        3440,
+        1500
+      ],
+      "id": "e2f49832-d07f-475d-9168-68e10771faa6",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "pMR2T6grewPQOAfV",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolName": "documents",
+        "toolDescription": "Faça uma busca pelo tema que foi lhe perguntado e trará o link correspondente que está no metadada",
+        "tableName": "documents",
+        "topK": 25,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.1,
+      "position": [
+        3740,
+        1500
+      ],
+      "id": "fc7b06c3-da6f-460f-a0f3-67b06117928c",
+      "name": "Postgres PGVector Store",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ed449ad9-2fbc-4527-837d-a9eabc9f1b4d",
+              "name": "ngrok",
+              "value": "https://6a6a-189-15-168-168.ngrok-free.app",
+              "type": "string"
+            },
+            {
+              "id": "ca685b0f-06ca-4145-b43a-cbfb44268d81",
+              "name": "videoUrl:",
+              "value": "={{ $json.body.videoUrl }}",
+              "type": "string"
+            },
+            {
+              "id": "0c85b41e-43b6-4334-8e75-f03cd76ea453",
+              "name": "language",
+              "value": "\"pt\"",
+              "type": "string"
+            },
+            {
+              "id": "83f5b707-b9e2-4802-a0e3-ce3e3ad78a93",
+              "name": "autoTranslate",
+              "value": "false",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        700
+      ],
+      "id": "20dd1c4d-07b2-49ff-99be-45d55c9e2555",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "e8998ac9-45a0-4a9d-a665-f1cdbd5f874a",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        700
+      ],
+      "id": "91d722cd-8c37-4d99-b4cb-a48ba4b4e3b1",
+      "name": "Webhook4",
+      "webhookId": "e8998ac9-45a0-4a9d-a665-f1cdbd5f874a"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": "documents",
+        "options": {
+          "columnNames": {
+            "values": {
+              "contentColumnName": "content"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.1,
+      "position": [
+        520,
+        2340
+      ],
+      "id": "b25bdda6-424c-48d6-8bfe-8c2a909a9c04",
+      "name": "Postgres PGVector Store1",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "videos",
+          "mode": "list",
+          "cachedResultName": "videos"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "yt_id": "={{ $json.video_id }}",
+            "title": "={{ $json.title }}",
+            "thumbnail": "={{ $json.thumbnail }}",
+            "captions": "={{ $json.raw_transcript }}",
+            "url": "=https://www.youtube.com/watch?v={{ $json.video_id }}",
+            "published_at": "={{ new Date($json.published_at).toLocaleString('pt-BR') }}",
+            "faq_captions": "={ \"faq\": [] }"
+          },
+          "matchingColumns": [
+            "yt_id"
+          ],
+          "schema": [
+            {
+              "id": "yt_id",
+              "displayName": "yt_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "thumbnail",
+              "displayName": "thumbnail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "captions",
+              "displayName": "captions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "faq_captions",
+              "displayName": "faq_captions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "published_at",
+              "displayName": "published_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        880,
+        700
+      ],
+      "id": "707fa6d9-7c23-45d1-b5a5-9df79bab2b8a",
+      "name": "inserir_video_bd1",
+      "credentials": {
+        "postgres": {
+          "id": "4ZZfmtCXt1vDXfef",
+          "name": "Youtube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.ngrok }}/transcript",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": \"{{ $json[\"videoUrl:\"] }}\",\n  \"language\": \"pt\",\n  \"auto_translate\": false\n} ",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        700
+      ],
+      "id": "da9c8f90-e402-4e2e-99c4-b7b80654caab",
+      "name": "buscar_info_videos"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"sucess\": \"Adicionado com sucesso\"\n  \n}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        700
+      ],
+      "id": "f0f94c31-0958-4c23-b0ac-e28b793dbf69",
+      "name": "Respond to Webhook2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://webhooks.orbitsync.com.br/webhook/65454564aawdaw-awdawaw64565",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "yt_id",
+              "value": "={{ $json.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        700
+      ],
+      "id": "e592bf3a-5097-4d45-a0b3-6624dabd5b86",
+      "name": "tratamento_para_rag"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://webhooks.orbitsync.com.br/webhook/bf857838-207e-4f4b-8f4c-d3a329fe6b18",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "yt_id",
+              "value": "={{ $('get_video').item.json.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        1240
+      ],
+      "id": "185437f0-f9c4-41a0-9d1c-5cb1e28bcd85",
+      "name": "criar_vetores"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://webhooks.orbitsync.com.br/webhook/c1bcc88e-7d88-46f6-ac5a-840b95efeb3e",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "yt_id",
+              "value": "={{ $('video1').item.json.yt_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        2360
+      ],
+      "id": "7f763bf5-9ff4-4049-bc2e-d77a42ed6baa",
+      "name": "criar_descricao"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"success\": true\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1160,
+        3260
+      ],
+      "id": "f7c65b69-6f99-44ea-8d0e-9b51b227a3e3",
+      "name": "Respond to Webhook3"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://evo.orbitsync.com.br/message/sendText/tpr",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $('auth').item.json.body.data.key.remoteJid }}\",\n  \"delay\": 2000,\n  \"text\": \"{{ $json.output }}\"\n}\n",
+        "options": {}
+      },
+      "id": "ad2a3bd7-c625-4f62-96eb-c3b287736f62",
+      "name": "Enviar Mensagem WhatsApp Lead6",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        3900,
+        1300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VQNcyvrdEIG6NkPT",
+          "name": "Evolution"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "path": "front",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        2540
+      ],
+      "id": "283825e8-4a85-4e32-9ef9-665f12970709",
+      "name": "Webhook5",
+      "webhookId": "438a4133-215b-41e5-92fb-aecb0768aea7"
+    },
+    {
+      "parameters": {
+        "html": "<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Assistente EAD - Adicionar Aula do YouTube</title>\n    <!-- Adicionar biblioteca Showdown para processamento de Markdown -->\n    <script src=\"https://cdnjs.cloudflare.com/ajax/libs/showdown/2.1.0/showdown.min.js\"></script>\n    <style>\n        * {\n            box-sizing: border-box;\n            margin: 0;\n            padding: 0;\n            font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif;\n        }\n        \n        body {\n            background-color: #f7f9fc;\n            min-height: 100vh;\n            display: flex;\n            flex-direction: column;\n        }\n        \n        header {\n            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);\n            color: white;\n            padding: 1.5rem;\n            text-align: center;\n            box-shadow: 0 2px 10px rgba(0,0,0,0.1);\n        }\n        \n        header h1 {\n            font-size: 1.8rem;\n            font-weight: 600;\n            margin-bottom: 0.5rem;\n        }\n        \n        header p {\n            opacity: 0.9;\n            font-size: 0.95rem;\n        }\n        \n        main {\n            flex-grow: 1;\n            padding: 2rem 1rem;\n            max-width: 900px;\n            margin: 0 auto;\n            width: 100%;\n        }\n        \n        .info-box {\n            background-color: #e3f2fd;\n            border-left: 4px solid #2196F3;\n            padding: 1rem;\n            margin-bottom: 2rem;\n            border-radius: 4px;\n        }\n        \n        .info-box h3 {\n            color: #1565C0;\n            margin-bottom: 0.5rem;\n            font-size: 1.1rem;\n        }\n        \n        .info-box p {\n            color: #1976D2;\n            font-size: 0.95rem;\n        }\n        \n        form {\n            background-color: white;\n            padding: 2rem;\n            border-radius: 8px;\n            box-shadow: 0 4px 6px rgba(0,0,0,0.1);\n            margin-bottom: 2rem;\n        }\n        \n        .form-group {\n            margin-bottom: 1.5rem;\n        }\n        \n        label {\n            display: block;\n            margin-bottom: 0.5rem;\n            font-weight: 600;\n            color: #2c3e50;\n        }\n        \n        input {\n            width: 100%;\n            padding: 0.75rem 1rem;\n            border: 2px solid #e0e0e0;\n            border-radius: 6px;\n            font-size: 1rem;\n            transition: border-color 0.3s ease;\n        }\n        \n        input:focus {\n            outline: none;\n            border-color: #2196F3;\n        }\n        \n        .url-examples {\n            font-size: 0.85rem;\n            color: #757575;\n            margin-top: 0.5rem;\n        }\n        \n        button {\n            width: 100%;\n            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);\n            color: white;\n            border: none;\n            padding: 1rem;\n            border-radius: 6px;\n            font-size: 1rem;\n            font-weight: 600;\n            cursor: pointer;\n            transition: all 0.3s ease;\n        }\n        \n        button:hover {\n            transform: translateY(-2px);\n            box-shadow: 0 6px 20px rgba(30, 60, 114, 0.3);\n        }\n        \n        button:disabled {\n            background: #bbdefb;\n            transform: none;\n            cursor: not-allowed;\n            box-shadow: none;\n        }\n        \n        .loading {\n            display: none;\n            text-align: center;\n            padding: 3rem;\n            background-color: white;\n            border-radius: 8px;\n            box-shadow: 0 4px 6px rgba(0,0,0,0.1);\n        }\n        \n        .loading.active {\n            display: block;\n        }\n        \n        .spinner {\n            border: 4px solid rgba(0, 0, 0, 0.1);\n            width: 40px;\n            height: 40px;\n            border-radius: 50%;\n            border-left-color: #2196F3;\n            animation: spin 1s linear infinite;\n            margin: 0 auto 1.5rem auto;\n        }\n        \n        @keyframes spin {\n            0% { transform: rotate(0deg); }\n            100% { transform: rotate(360deg); }\n        }\n        \n        .error {\n            background-color: #ffebee;\n            border-left: 4px solid #f44336;\n            color: #c62828;\n            padding: 1rem;\n            border-radius: 4px;\n            margin-bottom: 1.5rem;\n            display: none;\n        }\n        \n        .success {\n            background-color: #e8f5e9;\n            border-left: 4px solid #4caf50;\n            color: #2e7d32;\n            padding: 1rem;\n            border-radius: 4px;\n            margin-bottom: 1.5rem;\n            display: none;\n        }\n        \n        footer {\n            background-color: #f5f5f5;\n            padding: 1.5rem;\n            text-align: center;\n            color: #666;\n            font-size: 0.9rem;\n            border-top: 1px solid #e0e0e0;\n        }\n        \n        @media (max-width: 600px) {\n            header h1 {\n                font-size: 1.5rem;\n            }\n            \n            main {\n                padding: 1rem 0.5rem;\n            }\n            \n            form {\n                padding: 1.5rem;\n            }\n        }\n    </style>\n</head>\n<body>\n    <header>\n        <h1>📚 Assistente EAD - Sistema de Aulas</h1>\n        <p>Adicione vídeos do YouTube ao banco de dados do curso</p>\n    </header>\n    \n    <main>\n        <div class=\"info-box\">\n            <h3>Como funciona?</h3>\n            <p>1. Cole a URL de um vídeo do YouTube que será usado como aula</p>\n            <p>2. O sistema processará o vídeo e o adicionará ao banco de dados</p>\n            <p>3. Os alunos poderão localizar e consultar o conteúdo através do assistente de IA</p>\n        </div>\n        \n        <form id=\"videoForm\">\n            <div class=\"form-group\">\n                <label for=\"youtubeUrl\">URL da Aula no YouTube</label>\n                <input \n                    type=\"text\" \n                    id=\"youtubeUrl\" \n                    placeholder=\"https://www.youtube.com/watch?v=... ou https://youtu.be/...\" \n                    required\n                >\n                <div class=\"url-examples\">\n                    Formatos aceitos: youtube.com/watch?v=ID, youtu.be/ID, youtube.com/live/ID, youtube.com/shorts/ID\n                </div>\n            </div>\n            <button type=\"submit\" id=\"submitBtn\">\n                <span id=\"buttonText\">Adicionar Aula ao Sistema</span>\n            </button>\n        </form>\n        \n        <div id=\"error\" class=\"error\"></div>\n        <div id=\"success\" class=\"success\"></div>\n        \n        <div id=\"loading\" class=\"loading\">\n            <div class=\"spinner\"></div>\n            <p>Processando o vídeo... Isso pode levar alguns momentos.</p>\n        </div>\n    </main>\n    \n    <footer>\n        <p>Sistema de Assistente EAD © <span id=\"currentYear\"></span> - Todos os direitos reservados</p>\n    </footer>\n\n    <script>\n        // ===== CONFIGURAÇÕES =====\n        const CONFIG = {\n            WEBHOOK_URL: 'https://webhooks.orbitsync.com.br/webhook/e8998ac9-45a0-4a9d-a665-f1cdbd5f874a', // Substitua pela sua URL de webhook\n            API_KEY: '', // Se necessário, adicione sua API key aqui\n            TIMEOUT_MS: 60000, // Tempo limite em milissegundos (60 segundos)\n            SUCCESS_MESSAGE: 'Aula adicionada com sucesso ao sistema!',\n            ERROR_MESSAGE: 'Ocorreu um erro ao processar o vídeo. Por favor, tente novamente.',\n            PROCESSING_MESSAGE: 'Processando o vídeo... Isso pode levar alguns momentos.'\n        };\n        // ========================\n        \n        document.getElementById('currentYear').textContent = new Date().getFullYear();\n        \n        const form = document.getElementById('videoForm');\n        const loading = document.getElementById('loading');\n        const errorEl = document.getElementById('error');\n        const successEl = document.getElementById('success');\n        const submitBtn = document.getElementById('submitBtn');\n        const buttonText = document.getElementById('buttonText');\n        \n        // Função para validar URL do YouTube\n        function isValidYouTubeUrl(url) {\n            if (!url) return false;\n            \n            const patterns = [\n                /youtube\\.com\\/watch\\?v=([a-zA-Z0-9_-]{11})/,  // Formato padrão\n                /youtu\\.be\\/([a-zA-Z0-9_-]{11})/,              // Formato curto\n                /youtube\\.com\\/embed\\/([a-zA-Z0-9_-]{11})/,    // Formato de embed\n                /youtube\\.com\\/shorts\\/([a-zA-Z0-9_-]{11})/,   // Formato shorts\n                /youtube\\.com\\/live\\/([a-zA-Z0-9_-]{11})/      // Formato livestream\n            ];\n            \n            return patterns.some(pattern => pattern.test(url));\n        }\n        \n        // Função para extrair o ID do vídeo da URL\n        function extractVideoId(url) {\n            const patterns = [\n                /youtube\\.com\\/watch\\?v=([a-zA-Z0-9_-]{11})/,\n                /youtu\\.be\\/([a-zA-Z0-9_-]{11})/,\n                /youtube\\.com\\/embed\\/([a-zA-Z0-9_-]{11})/,\n                /youtube\\.com\\/shorts\\/([a-zA-Z0-9_-]{11})/,\n                /youtube\\.com\\/live\\/([a-zA-Z0-9_-]{11})/\n            ];\n            \n            for (const pattern of patterns) {\n                const match = url.match(pattern);\n                if (match) {\n                    return match[1];\n                }\n            }\n            return null;\n        }\n        \n        // Função para resetar o UI\n        function resetUI() {\n            errorEl.style.display = 'none';\n            successEl.style.display = 'none';\n            loading.classList.remove('active');\n            submitBtn.disabled = false;\n            buttonText.textContent = 'Adicionar Aula ao Sistema';\n        }\n        \n        // Função para mostrar erro\n        function showError(message) {\n            errorEl.textContent = message;\n            errorEl.style.display = 'block';\n            successEl.style.display = 'none';\n        }\n        \n        // Função para mostrar sucesso\n        function showSuccess(message) {\n            successEl.textContent = message;\n            successEl.style.display = 'block';\n            errorEl.style.display = 'none';\n        }\n        \n        form.addEventListener('submit', async (e) => {\n            e.preventDefault();\n            \n            const youtubeUrl = document.getElementById('youtubeUrl').value.trim();\n            \n            // Validar URL\n            if (!isValidYouTubeUrl(youtubeUrl)) {\n                showError('Por favor, insira uma URL válida do YouTube');\n                return;\n            }\n            \n            const videoId = extractVideoId(youtubeUrl);\n            if (!videoId) {\n                showError('Não foi possível extrair o ID do vídeo');\n                return;\n            }\n            \n            // Reset UI e mostrar loading\n            resetUI();\n            loading.classList.add('active');\n            submitBtn.disabled = true;\n            buttonText.textContent = 'Processando...';\n            \n            try {\n                // Preparar dados para o webhook\n                const payload = {\n                    videoUrl: youtubeUrl,\n                    videoId: videoId,\n                    timestamp: new Date().toISOString()\n                };\n                \n                // Se tiver API key configurada, adicionar aos headers\n                const headers = {\n                    'Content-Type': 'application/json'\n                };\n                \n                if (CONFIG.API_KEY) {\n                    headers['Authorization'] = `Bearer ${CONFIG.API_KEY}`;\n                }\n                \n                // Fazer requisição ao webhook\n                const response = await fetch(CONFIG.WEBHOOK_URL, {\n                    method: 'POST',\n                    headers: headers,\n                    body: JSON.stringify(payload),\n                    signal: AbortSignal.timeout(CONFIG.TIMEOUT_MS)\n                });\n                \n                if (!response.ok) {\n                    throw new Error(`Erro HTTP: ${response.status}`);\n                }\n                \n                const data = await response.json();\n                \n                if (data.error) {\n                    throw new Error(data.error);\n                }\n                \n                // Sucesso\n                showSuccess(CONFIG.SUCCESS_MESSAGE);\n                document.getElementById('youtubeUrl').value = '';\n                \n            } catch (err) {\n                if (err.name === 'AbortError') {\n                    showError('Tempo limite excedido. Por favor, tente novamente.');\n                } else {\n                    showError(err.message || CONFIG.ERROR_MESSAGE);\n                }\n                console.error('Erro:', err);\n            } finally {\n                loading.classList.remove('active');\n                submitBtn.disabled = false;\n                buttonText.textContent = 'Adicionar Aula ao Sistema';\n            }\n        });\n        \n        // Adicionar feedback visual ao copiar/colar URL\n        document.getElementById('youtubeUrl').addEventListener('paste', (e) => {\n            setTimeout(() => {\n                const url = e.target.value;\n                if (isValidYouTubeUrl(url)) {\n                    e.target.style.borderColor = '#4caf50';\n                    setTimeout(() => {\n                        e.target.style.borderColor = '#e0e0e0';\n                    }, 2000);\n                }\n            }, 100);\n        });\n    </script>\n</body>\n</html>"
+      },
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        2860,
+        2540
+      ],
+      "id": "404d3a64-9676-467d-b78c-786acf8daa42",
+      "name": "HTML"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3080,
+        2540
+      ],
+      "id": "b5989b65-67ce-469b-97d6-780241d8480e",
+      "name": "Respond to Webhook4"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n.dinastia.uk",
+            "user-agent": "axios/1.7.4",
+            "content-length": "17",
+            "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7",
+            "accept-encoding": "gzip, compress, deflate, br",
+            "content-type": "application/json",
+            "x-forwarded-for": "172.18.0.1",
+            "x-forwarded-host": "n8n.dinastia.uk",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "9ba83ca7dbb8",
+            "x-real-ip": "172.18.0.1"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "yt_id": "S9uPNppGsGo"
+          },
+          "webhookUrl": "https://n8n.dinastia.uk/webhook/bf857838-207e-4f4b-8f4c-d3a329fe6b18",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "Webhook3": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n.dinastia.uk",
+            "user-agent": "axios/1.7.4",
+            "content-length": "17",
+            "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7",
+            "accept-encoding": "gzip, compress, deflate, br",
+            "content-type": "application/json",
+            "x-forwarded-for": "172.18.0.1",
+            "x-forwarded-host": "n8n.dinastia.uk",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "9ba83ca7dbb8",
+            "x-real-ip": "172.18.0.1"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "yt_id": "1KEJ1UTp9nI"
+          },
+          "webhookUrl": "https://n8n.dinastia.uk/webhook/bf857838-207e-4f4b-8f4c-d3a329fe6b18",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "Webhook1": [
+      {
+        "json": {
+          "headers": {
+            "host": "webhooks.orbitsync.com.br",
+            "user-agent": "axios/1.8.2",
+            "content-length": "23",
+            "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7",
+            "accept-encoding": "gzip, compress, deflate, br",
+            "content-type": "application/json",
+            "x-forwarded-for": "172.18.0.1",
+            "x-forwarded-host": "webhooks.orbitsync.com.br",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik_traefik.1",
+            "x-real-ip": "172.18.0.1"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "yt_id": "S9uPNppGsGo"
+          },
+          "webhookUrl": "https://webhooks.orbitsync.com.br/webhook/65454564aawdaw-awdawaw64565",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "Webhook5": [
+      {
+        "json": {
+          "headers": {
+            "host": "webhooks.orbitsync.com.br",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "pt-BR,pt;q=0.7",
+            "cache-control": "max-age=0",
+            "priority": "u=0, i",
+            "sec-ch-ua": "\"Chromium\";v=\"136\", \"Brave\";v=\"136\", \"Not.A/Brand\";v=\"99\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "sec-gpc": "1",
+            "upgrade-insecure-requests": "1",
+            "x-forwarded-for": "189.15.168.168",
+            "x-forwarded-host": "webhooks.orbitsync.com.br",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik_traefik.1",
+            "x-real-ip": "189.15.168.168"
+          },
+          "params": {},
+          "query": {},
+          "body": {},
+          "webhookUrl": "https://webhooks.orbitsync.com.br/webhook/front",
+          "executionMode": "production"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "parsedSrt": {
+      "main": [
+        [
+          {
+            "node": "minutos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "resumo": {
+      "main": [
+        [
+          {
+            "node": "parsedSrt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_video": {
+      "main": [
+        [
+          {
+            "node": "merge_perguntas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "minutos": {
+      "main": [
+        [
+          {
+            "node": "minuto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "minuto": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "perguntas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "perguntas": {
+      "main": [
+        [
+          {
+            "node": "get_video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "perguntas",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "merge_perguntas": {
+      "main": [
+        [
+          {
+            "node": "update_faq",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "update_faq": {
+      "main": [
+        [
+          {
+            "node": "minuto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "video": {
+      "main": [
+        [
+          {
+            "node": "resumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Postgres PGVector Store1",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recursive Character Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Postgres PGVector Store1",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "video1": {
+      "main": [
+        [
+          {
+            "node": "Postgres PGVector Store1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "video1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook1": {
+      "main": [
+        [
+          {
+            "node": "video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "resumo",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "criar_vetores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook3": {
+      "main": [
+        [
+          {
+            "node": "Postgres2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres2": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Postgres3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Enviar Mensagem WhatsApp Lead6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI3": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Postgres PGVector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar_srt": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "videos": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook2": {
+      "main": [
+        [
+          {
+            "node": "auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "auth": {
+      "main": [
+        [
+          {
+            "node": "listar_videos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "listar_videos": {
+      "main": [
+        [
+          {
+            "node": "videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres PGVector Store": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "buscar_info_videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook4": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres PGVector Store1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar_info_videos": {
+      "main": [
+        [
+          {
+            "node": "inserir_video_bd1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "inserir_video_bd1": {
+      "main": [
+        [
+          {
+            "node": "tratamento_para_rag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tratamento_para_rag": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "criar_vetores": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "criar_descricao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres3": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook5": {
+      "main": [
+        [
+          {
+            "node": "HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "d6f1b101-3d13-4291-b144-87bea9fa52cf",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "95e25c7091914003ffe8f2884a62a16a71f8f2d03a63c1a58e9981fc9e2c452a"
+  },
+  "id": "XBarSNRjUvqh8gBR",
+  "tags": []
+}
