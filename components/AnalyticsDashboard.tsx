@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { HelpCircle, MessageSquare, TrendingUp, AlertCircle, ThumbsUp, ThumbsDown, MessageSquareQuote } from 'lucide-react';
 import { useAnalytics } from '../contexts/AnalyticsContext';
+import config from '../config';
 
 const engagementData = [
     { name: 'Semana 1', interactions: 400 },
@@ -78,7 +79,7 @@ const AnalyticsDashboard: React.FC = () => {
     React.useEffect(() => {
         const fetchStats = async () => {
             try {
-                const response = await fetch('http://localhost:3001/api/professor/stats');
+                const response = await fetch(`${config.API_URL}/api/professor/stats`);
                 const data = await response.json();
                 setStats(data);
             } catch (error) {

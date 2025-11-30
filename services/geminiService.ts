@@ -1,8 +1,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { QuizQuestion, Flashcard, Summary, ChatMessage } from '../types';
+import { Question, Flashcard, Summary, ChatMessage } from '../types';
 
 if (!process.env.API_KEY) {
-  console.warn("API_KEY environment variable not set. Gemini API calls will fail.");
+    console.warn("API_KEY environment variable not set. Gemini API calls will fail.");
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -32,7 +32,7 @@ const quizSchema = {
                         description: "A resposta correta dentre as opções."
                     }
                 },
-                 required: ["question", "options", "correctAnswer"]
+                required: ["question", "options", "correctAnswer"]
             }
         }
     },
@@ -131,7 +131,7 @@ export const extractKeyPoints = async (context: string): Promise<string[]> => {
 };
 
 
-export const generateQuiz = async (context: string, topic: string, numberOfQuestions: number = 4, failedQuestions?: QuizQuestion[]): Promise<QuizQuestion[]> => {
+export const generateQuiz = async (context: string, topic: string, numberOfQuestions: number = 4, failedQuestions?: Question[]): Promise<Question[]> => {
     try {
         let prompt = `Com base no seguinte material de curso sobre "${topic}", gere um quiz de múltipla escolha com ${numberOfQuestions} ${numberOfQuestions === 1 ? 'pergunta' : 'perguntas'} para testar a compreensão de um aluno. Cada pergunta deve ter 4 opções.
 
@@ -141,8 +141,8 @@ export const generateQuiz = async (context: string, topic: string, numberOfQuest
         ---
         `;
 
-        if(failedQuestions && failedQuestions.length > 0){
-             prompt = `Um aluno teve dificuldades com as seguintes perguntas sobre "${topic}". Gere um novo quiz de múltipla escolha com ${numberOfQuestions} ${numberOfQuestions === 1 ? 'pergunta' : 'perguntas'} que foque nos mesmos conceitos subjacentes, mas com perguntas e opções diferentes. Isso o ajudará a praticar e reforçar seu aprendizado.
+        if (failedQuestions && failedQuestions.length > 0) {
+            prompt = `Um aluno teve dificuldades com as seguintes perguntas sobre "${topic}". Gere um novo quiz de múltipla escolha com ${numberOfQuestions} ${numberOfQuestions === 1 ? 'pergunta' : 'perguntas'} que foque nos mesmos conceitos subjacentes, mas com perguntas e opções diferentes. Isso o ajudará a praticar e reforçar seu aprendizado.
 
              Perguntas erradas anteriormente:
              ---
@@ -165,14 +165,14 @@ export const generateQuiz = async (context: string, topic: string, numberOfQuest
                 responseSchema: quizSchema,
             },
         });
-        
+
         const jsonText = response.text.trim();
         const result = JSON.parse(jsonText);
 
         if (result && result.questions && Array.isArray(result.questions)) {
-            return result.questions as QuizQuestion[];
+            return result.questions as Question[];
         } else {
-             throw new Error("Formato de quiz inválido recebido da API.");
+            throw new Error("Formato de quiz inválido recebido da API.");
         }
     } catch (error) {
         console.error("Erro ao gerar quiz:", error);
@@ -181,7 +181,7 @@ export const generateQuiz = async (context: string, topic: string, numberOfQuest
 };
 
 export const answerQuestion = async (context: string, question: string): Promise<string> => {
-     try {
+    try {
         const prompt = `Você é "EdWise", um tutor de IA amigável e prestativo. Um aluno tem uma pergunta sobre o curso. Com base APENAS no material do curso fornecido, responda à pergunta do aluno de forma clara e concisa. Se a resposta não estiver no material, diga "Desculpe, não consegui encontrar uma resposta para isso no material do curso fornecido."
 
         Material do Curso:
@@ -222,14 +222,14 @@ export const generateFlashcards = async (context: string, topic: string): Promis
                 responseSchema: flashcardSchema,
             },
         });
-        
+
         const jsonText = response.text.trim();
         const result = JSON.parse(jsonText);
 
         if (result && result.flashcards && Array.isArray(result.flashcards)) {
             return result.flashcards as Flashcard[];
         } else {
-             throw new Error("Formato de flashcards inválido recebido da API.");
+            throw new Error("Formato de flashcards inválido recebido da API.");
         }
     } catch (error) {
         console.error("Erro ao gerar flashcards:", error);
@@ -262,14 +262,14 @@ export const generateSummary = async (context: string, chatHistory: ChatMessage[
                 responseSchema: summarySchema,
             },
         });
-        
+
         const jsonText = response.text.trim();
         const result = JSON.parse(jsonText);
 
         if (result && result.title && result.points) {
             return result as Summary;
         } else {
-             throw new Error("Formato de resumo inválido recebido da API.");
+            throw new Error("Formato de resumo inválido recebido da API.");
         }
     } catch (error) {
         console.error("Erro ao gerar resumo:", error);

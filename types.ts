@@ -7,15 +7,49 @@ export enum UserRole {
 export enum MaterialType {
     Video = 'VIDEO',
     PDF = 'PDF',
-    Document = 'DOCUMENT',
-    Quiz = 'QUIZ'
+    Text = 'TEXT',
+    Quiz = 'QUIZ',
+    Assignment = 'ASSIGNMENT',
+    Link = 'LINK',
+    File = 'FILE'
 }
 
 export interface Material {
     id: string;
     title: string;
     type: MaterialType;
-    content: string; // URL for video/pdf, or JSON for quiz
+    content: string; // URL, Text content, or JSON
+    description?: string;
+    settings?: any;
+    is_published?: boolean;
+    release_at?: string;
+    release_after_days?: number;
+    order_index?: number;
+    module_id?: number;
+}
+
+export interface Question {
+    id?: number;
+    question_text: string;
+    question_type: 'multiple_choice' | 'true_false';
+    options: { text: string; isCorrect: boolean }[];
+    order_index?: number;
+}
+
+export interface Quiz {
+    id?: number;
+    content_id?: number;
+    title: string;
+    passing_score: number;
+    questions: Question[];
+}
+
+export interface Assignment {
+    id?: number;
+    content_id?: number;
+    max_score: number;
+    due_date?: string;
+    instructions: string;
 }
 
 export interface Course {
@@ -23,19 +57,22 @@ export interface Course {
     title: string;
     description: string;
     thumbnail: string;
-    materials: Material[];
+    materials: Material[]; // Legacy support, prefer modules structure
+    modules?: Module[];
 }
 
-export interface QuizQuestion {
-    question: string;
-    options: string[];
-    correctAnswer: string;
+export interface Module {
+    id: number;
+    title: string;
+    contents: Material[];
+    subModules?: Module[];
 }
 
 export interface QuizResult {
-    question: QuizQuestion;
-    userAnswer: string;
+    questionId: number;
+    userAnswer: any;
     isCorrect: boolean;
+    score: number;
 }
 
 export interface Flashcard {

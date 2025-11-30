@@ -1,0 +1,146 @@
+version: '3.8'
+
+services:
+  # Backend Principal
+  backend:
+    build: ./server
+    container_name: edwise-backend
+    restart: always
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@db:5432/edwise
+      - REDIS_URL=redis://redis:6379
+      - WHISPER_SERVICE_URL=http://whisper-service:5050
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - MINIO_SERVER_URL=${MINIO_SERVER_URL:-https://s3.tgbia.com}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_BUCKET=${MINIO_BUCKET:-edwise}
+    depends_on:
+      - db
+      - redis
+      - minio
+    volumes:
+      - uploads:/app/uploads
+    networks:
+      - edwise-network
+
+  # Serviço de Transcrição Whisper (Separado)
+  whisper-service:
+    build: ./whisper-service
+    container_name: edwise-whisper
+    restart: always
+    ports:
+      - "5050:5050"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - MODEL=medium
+      - DEVICE=cpu
+      - WORKERS=2
+    depends_on:
+      - redis
+    volumes:
+      - uploads:/app/uploads
+      - whisper-cache:/root/.cache/whisper
+    networks:
+      - edwise-network
+    # Descomente para usar GPU
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+    # Redis - Fila de Jobs
+  redis:
+    image: redis:7-alpine
+    container_name: edwise-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - edwise-network
+    command: redis-server --appendonly yes
+
+  # PostgreSQL
+  db:
+    image: postgres:15-alpine
+    container_name: edwise-db
+    restart: always
+    environment:
+      - POSTGRES_DB=edwise
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - edwise-network
+    ports:
+      - "5432:5432"
+
+  # MinIO (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: edwise-minio
+    restart: always
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+    volumes:
+      - minio-data:/data
+    networks:
+      - edwise-network
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+
+  # Frontend
+  frontend:
+    build: .
+    container_name: edwise-frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - edwise-network
+    environment:
+      - REACT_APP_API_URL=http://localhost:3001
+
+  # Nginx (Reverse Proxy - Opcional)
+  nginx:
+    image: nginx:alpine
+    container_name: edwise-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - edwise-network
+
+volumes:
+  uploads:
+  whisper-cache:
+  redis-data:
+  postgres-data:
+  minio-data:
+
+
+networks:
+  edwise-network:
+    driver: bridge

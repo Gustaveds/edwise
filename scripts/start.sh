@@ -139,12 +139,11 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 # Iniciar Backend (porta 3001)
-echo -e "${CYAN}  Iniciando Backend (http://localhost:3001)...${NC}"
-(
-    cd "$ROOT_DIR/server" || exit 1
-    echo "Backend CWD: $(pwd)"
-    node index.js > "$ROOT_DIR/backend.log" 2>&1
-) &
+echo ""
+echo "  ${GREEN}Iniciando Backend (http://localhost:3001)...${NC}"
+echo "Backend CWD: $ROOT_DIR/server"
+cd "$ROOT_DIR/server"
+./start-backend.sh >> "$ROOT_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 PIDS+=($BACKEND_PID)
 sleep 3

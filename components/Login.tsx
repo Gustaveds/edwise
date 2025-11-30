@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { BookOpen, Mail, Lock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
+import config from '../config';
+
 interface LoginProps {
     onLogin: () => void;
     onForgotPasswordClick: () => void;
@@ -20,7 +22,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, onForgotPasswordClick }) => {
         setError('');
 
         try {
-            const response = await fetch('http://localhost:3001/api/auth/login', {
+            const response = await fetch(`${config.API_URL}/api/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, password }),

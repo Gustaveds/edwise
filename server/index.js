@@ -1,19 +1,30 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import db from './db.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { generateResponse } from './services/geminiAgent.js';
+import { processVideoWithAI } from './services/videoAI.js';
+import multer from 'multer';
+import { v4 as uuidv4 } from 'uuid';
+import s3Client from './services/minio.js';
+import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import fs from 'fs';
+import path from 'path';
+import { videoQueue } from './services/queue.js';
 
 const app = express();
-const PORT = 3001;
-const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_key_change_me';
+const upload = multer({ dest: 'uploads/' }); // Temp storage
+const BUCKET_NAME = 'edwise';
+const PORT = process.env.PORT || 3001;
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 app.use(cors());
 app.use(express.json());
 
-// --- Middleware ---
-const authenticateToken = (req, res, next) => {
+// Middleware to authenticate token
+function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
@@ -24,51 +35,58 @@ const authenticateToken = (req, res, next) => {
         req.user = user;
         next();
     });
-};
+}
 
 // --- Auth Routes ---
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
+    console.log('🔐 Login attempt:', { email, passwordProvided: !!password });
+
     try {
+        await db.query('SELECT NOW()');
         const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-        const user = result.rows[0];
 
-        if (!user) return res.status(400).json({ error: 'User not found' });
-
-        if (await bcrypt.compare(password, user.password_hash)) {
-            const token = jwt.sign({ id: user.id, role: user.role, name: user.name }, JWT_SECRET);
-            res.json({ token, user: { id: user.id, name: user.name, role: user.role, email: user.email } });
-        } else {
-            res.status(401).json({ error: 'Invalid password' });
+        if (result.rows.length === 0) {
+            console.log('❌ User not found:', email);
+            return res.status(401).json({ error: 'Invalid credentials' });
         }
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Login failed' });
-    }
-});
 
-app.post('/api/auth/register', authenticateToken, async (req, res) => {
-    // Only Admin can register new users (or maybe professors can register students? sticking to plan: Admin creates)
-    if (req.user.role !== 'admin') return res.sendStatus(403);
+        const user = result.rows[0];
+        console.log('👤 User found:', { id: user.id, email: user.email, role: user.role });
 
-    const { name, email, password, role } = req.body;
-    try {
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const result = await db.query(
-            'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
-            [name, email, hashedPassword, role]
+        const isValid = await bcrypt.compare(password, user.password_hash);
+        console.log('🔑 Password match:', isValid);
+
+        if (!isValid) {
+            console.log('❌ Invalid password for:', email);
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        const token = jwt.sign(
+            { id: user.id, email: user.email, role: user.role },
+            JWT_SECRET,
+            { expiresIn: '24h' }
         );
-        res.json(result.rows[0]);
+
+        console.log('✅ Login successful for:', email);
+        res.json({
+            token,
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: user.role
+            }
+        });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Registration failed' });
+        console.error('💥 Login error:', err);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
 // --- Course Routes ---
 
-// Get all courses (for student enrollment or admin view) or courses for specific professor
 app.get('/api/courses', authenticateToken, async (req, res) => {
     try {
         let query = 'SELECT * FROM courses';
@@ -111,6 +129,85 @@ app.post('/api/courses', authenticateToken, async (req, res) => {
     }
 });
 
+app.put('/api/courses/:id', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+
+    const courseId = req.params.id;
+    const { title, description, organization_type } = req.body;
+
+    try {
+        const result = await db.query(
+            'UPDATE courses SET title = $1, description = $2, organization_type = $3 WHERE id = $4 RETURNING *',
+            [title, description, organization_type, courseId]
+        );
+
+        if (result.rows.length === 0) return res.status(404).json({ error: 'Course not found' });
+
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update course' });
+    }
+});
+
+app.delete('/api/courses/:id', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+    const courseId = req.params.id;
+
+    try {
+        // 1. Get all modules of the course
+        const modulesRes = await db.query('SELECT id FROM modules WHERE course_id = $1', [courseId]);
+        const modules = modulesRes.rows;
+
+        // 2. For each module, delete its contents (cascade)
+        for (const module of modules) {
+            const contentsRes = await db.query('SELECT * FROM contents WHERE module_id = $1', [module.id]);
+            const contents = contentsRes.rows;
+
+            for (const content of contents) {
+                if (content.type === 'VIDEO' || content.type === 'video') {
+                    const videoRes = await db.query('SELECT id, s3_key FROM videos WHERE content_id = $1', [content.id]);
+                    if (videoRes.rows.length > 0) {
+                        const video = videoRes.rows[0];
+
+                        // Delete AI embeddings
+                        await db.query("DELETE FROM documents WHERE metadata->>'video_id' = $1", [video.id.toString()]);
+
+                        // Delete video segments
+                        await db.query('DELETE FROM video_segments WHERE video_id = $1', [video.id]);
+
+                        // Delete video record
+                        await db.query('DELETE FROM videos WHERE id = $1', [video.id]);
+
+                        // Delete from S3
+                        if (video.s3_key) {
+                            try {
+                                await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: video.s3_key }));
+                                console.log(`✓ Deleted S3 file: ${video.s3_key}`);
+                            } catch (s3Err) {
+                                console.error(`⚠ Failed to delete S3 file: ${video.s3_key}`, s3Err);
+                            }
+                        }
+                    }
+                }
+                // Delete content record
+                await db.query('DELETE FROM contents WHERE id = $1', [content.id]);
+            }
+            // Delete module record
+            await db.query('DELETE FROM modules WHERE id = $1', [module.id]);
+        }
+
+        // 3. Delete the course itself
+        await db.query('DELETE FROM courses WHERE id = $1', [courseId]);
+
+        res.json({ success: true, message: 'Course and all related data deleted successfully' });
+
+    } catch (err) {
+        console.error('Error deleting course:', err);
+        res.status(500).json({ error: 'Failed to delete course' });
+    }
+});
+
 app.get('/api/courses/:id', authenticateToken, async (req, res) => {
     try {
         const courseId = req.params.id;
@@ -121,7 +218,9 @@ app.get('/api/courses/:id', authenticateToken, async (req, res) => {
         // Fetch modules and contents
         const modules = await db.query('SELECT * FROM modules WHERE course_id = $1 ORDER BY order_index', [courseId]);
         const contents = await db.query(`
-            SELECT c.* FROM contents c
+            SELECT c.*, v.id as video_id
+            FROM contents c
+            LEFT JOIN videos v ON c.id = v.content_id
             JOIN modules m ON c.module_id = m.id
             WHERE m.course_id = $1
             ORDER BY c.order_index
@@ -169,20 +268,606 @@ app.post('/api/modules', authenticateToken, async (req, res) => {
     }
 });
 
+app.delete('/api/modules/:id', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+    const moduleId = req.params.id;
+
+    try {
+        // 1. Get all contents of the module
+        const contentsRes = await db.query('SELECT * FROM contents WHERE module_id = $1', [moduleId]);
+        const contents = contentsRes.rows;
+
+        // 2. Delete each content (reusing logic would be best, but for now let's duplicate the critical cleanup logic to be safe)
+        for (const content of contents) {
+            if (content.type === 'VIDEO' || content.type === 'video') {
+                const videoRes = await db.query('SELECT id, s3_key FROM videos WHERE content_id = $1', [content.id]);
+                if (videoRes.rows.length > 0) {
+                    const video = videoRes.rows[0];
+
+                    // Delete AI embeddings
+                    await db.query("DELETE FROM documents WHERE metadata->>'video_id' = $1", [video.id.toString()]);
+
+                    // Delete video segments
+                    await db.query('DELETE FROM video_segments WHERE video_id = $1', [video.id]);
+
+                    // Delete video record
+                    await db.query('DELETE FROM videos WHERE id = $1', [video.id]);
+
+                    // Delete from S3
+                    if (video.s3_key) {
+                        try {
+                            await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: video.s3_key }));
+                            console.log(`✓ Deleted S3 file: ${video.s3_key}`);
+                        } catch (s3Err) {
+                            console.error(`⚠ Failed to delete S3 file: ${video.s3_key}`, s3Err);
+                        }
+                    }
+                }
+            }
+            // Delete content record
+            await db.query('DELETE FROM contents WHERE id = $1', [content.id]);
+        }
+
+        // 3. Delete the module itself
+        await db.query('DELETE FROM modules WHERE id = $1', [moduleId]);
+
+        res.json({ success: true, message: 'Module and all contents deleted successfully' });
+
+    } catch (err) {
+        console.error('Error deleting module:', err);
+        res.status(500).json({ error: 'Failed to delete module' });
+    }
+});
+
 // --- Content Routes ---
 
 app.post('/api/contents', authenticateToken, async (req, res) => {
     if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
-    const { module_id, title, type, data } = req.body;
+    const { module_id, title, type, data, description, settings, is_published, release_at, release_after_days } = req.body;
     try {
         const result = await db.query(
-            'INSERT INTO contents (module_id, title, type, data) VALUES ($1, $2, $3, $4) RETURNING *',
-            [module_id, title, type, data]
+            'INSERT INTO contents (module_id, title, type, data, description, settings, is_published, release_at, release_after_days) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+            [module_id, title, type, data, description, settings || {}, is_published || false, release_at, release_after_days]
         );
         res.json(result.rows[0]);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to create content' });
+    }
+});
+
+app.post('/api/quizzes', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+    const { content_id, title, passing_score, questions } = req.body;
+
+    try {
+        await db.query('BEGIN');
+
+        const quizResult = await db.query(
+            'INSERT INTO quizzes (content_id, title, passing_score) VALUES ($1, $2, $3) RETURNING id',
+            [content_id, title, passing_score]
+        );
+        const quizId = quizResult.rows[0].id;
+
+        for (const [index, q] of questions.entries()) {
+            await db.query(
+                'INSERT INTO quiz_questions (quiz_id, question_text, question_type, options, order_index) VALUES ($1, $2, $3, $4, $5)',
+                [quizId, q.question_text, q.question_type, JSON.stringify(q.options), index]
+            );
+        }
+
+        await db.query('COMMIT');
+        res.json({ id: quizId, message: 'Quiz created successfully' });
+    } catch (err) {
+        await db.query('ROLLBACK');
+        console.error(err);
+        res.status(500).json({ error: 'Failed to create quiz' });
+    }
+});
+
+app.post('/api/assignments', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+    const { content_id, max_score, due_date, instructions } = req.body;
+
+    try {
+        const result = await db.query(
+            'INSERT INTO assignments (content_id, max_score, due_date, instructions) VALUES ($1, $2, $3, $4) RETURNING *',
+            [content_id, max_score, due_date, instructions]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to create assignment' });
+    }
+});
+
+// --- Video Upload Route ---
+
+app.post('/api/upload/video', authenticateToken, upload.single('video'), async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+
+    const file = req.file;
+    const { title, description, module_id } = req.body;
+
+    if (!file) {
+        return res.status(400).json({ error: 'No video file provided' });
+    }
+
+    const fileKey = `videos/${uuidv4()}-${file.originalname}`;
+    const fileStream = fs.createReadStream(file.path);
+
+    try {
+        // 1. Upload to MinIO
+        const uploadParams = {
+            Bucket: BUCKET_NAME,
+            Key: fileKey,
+            Body: fileStream,
+            ContentType: file.mimetype,
+        };
+
+        await s3Client.send(new PutObjectCommand(uploadParams));
+
+        // 2. Create Content Record
+        const contentResult = await db.query(
+            'INSERT INTO contents (module_id, title, type, description, data, is_published) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+            [module_id, title, 'video', description, { s3_key: fileKey, filename: file.originalname }, false]
+        );
+        const contentId = contentResult.rows[0].id;
+
+        // 3. Create Video Record
+        const videoResult = await db.query(
+            'INSERT INTO videos (content_id, filename, s3_key, status) VALUES ($1, $2, $3, $4) RETURNING id',
+            [contentId, file.originalname, fileKey, 'processing']
+        );
+
+        // 4. Cleanup temp file
+        fs.unlinkSync(file.path);
+
+        // 5. Add to Processing Queue
+        await videoQueue.add('process-video', {
+            videoId: videoResult.rows[0].id,
+            s3Key: fileKey,
+            filename: file.originalname,
+            contentId: contentId
+        });
+
+        res.json({
+            success: true,
+            content_id: contentId,
+            video_id: videoResult.rows[0].id,
+            message: 'Video uploaded successfully and processing started.'
+        });
+
+    } catch (err) {
+        console.error('Upload error:', err);
+        // Try to cleanup temp file if it exists
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        res.status(500).json({ error: 'Failed to upload video' });
+    }
+});
+
+// --- Video AI Processing Routes ---
+
+app.post('/api/videos/:id/process-ai', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+
+    const videoId = req.params.id;
+
+    try {
+        // Check if video exists
+        const videoCheck = await db.query('SELECT * FROM videos WHERE id = $1', [videoId]);
+        if (videoCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'Video not found' });
+        }
+
+        const video = videoCheck.rows[0];
+
+        // Check if already processed
+        if (video.summary && video.transcription) {
+            return res.status(400).json({ error: 'Video already processed with AI' });
+        }
+
+        // Start AI processing (this will run async)
+        processVideoWithAI(videoId)
+            .then(() => console.log(`✅ Video ${videoId} processed successfully`))
+            .catch(err => console.error(`❌ Error processing video ${videoId}:`, err));
+
+        res.json({
+            success: true,
+            message: 'AI processing started',
+            videoId
+        });
+
+    } catch (err) {
+        console.error('Error starting AI processing:', err);
+        res.status(500).json({ error: 'Failed to start AI processing' });
+    }
+});
+
+app.get('/api/videos/:id/ai-data', authenticateToken, async (req, res) => {
+    const videoId = req.params.id;
+
+    try {
+        const result = await db.query(
+            `SELECT v.id, v.summary, v.transcription, v.metadata, v.status, c.title 
+             FROM videos v 
+             JOIN contents c ON v.content_id = c.id 
+             WHERE v.id = $1`,
+            [videoId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Video not found' });
+        }
+
+        const video = result.rows[0];
+        const faqs = video.metadata?.faq || [];
+
+        res.json({
+            id: video.id,
+            title: video.title,
+            summary: video.summary,
+            faqs: faqs,
+            transcription: video.transcription,
+            status: video.status,
+            processed: !!(video.summary && video.transcription)
+        });
+
+    } catch (err) {
+        console.error('Error fetching AI data:', err);
+        res.status(500).json({ error: 'Failed to fetch AI data' });
+    }
+});
+
+// GET - Video processing status (real-time status for monitoring)
+app.get('/api/videos/:id/processing-status', authenticateToken, async (req, res) => {
+    const videoId = req.params.id;
+
+    try {
+        const result = await db.query(
+            `SELECT v.id, v.status, v.metadata, v.created_at, v.updated_at, c.title
+             FROM videos v
+             JOIN contents c ON v.content_id = c.id
+             WHERE v.id = $1`,
+            [videoId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Video not found' });
+        }
+
+        const video = result.rows[0];
+        const metadata = video.metadata || {};
+
+        // Calculate processing time
+        const createdAt = new Date(video.created_at);
+        const updatedAt = new Date(video.updated_at);
+        const now = new Date();
+
+        const processingTimeSeconds = video.status === 'processing'
+            ? Math.floor((now - createdAt) / 1000)
+            : Math.floor((updatedAt - createdAt) / 1000);
+
+        res.json({
+            id: video.id,
+            title: video.title,
+            status: video.status, // 'processing', 'ready', 'error'
+            processingStarted: metadata.processing_started,
+            error: metadata.error,
+            faqCount: metadata.faq?.length || 0,
+            processingTimeSeconds,
+            updated_at: video.updated_at
+        });
+
+    } catch (err) {
+        console.error('Error fetching processing status:', err);
+        res.status(500).json({ error: 'Failed to fetch processing status' });
+    }
+});
+
+// GET - Stream video from S3/MinIO
+app.get('/api/videos/:id/stream', async (req, res) => {
+    const videoId = req.params.id;
+    const token = req.headers['authorization']?.split(' ')[1] || req.query.token;
+
+    if (!token) return res.sendStatus(401);
+
+    try {
+        jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+        return res.sendStatus(403);
+    }
+
+    try {
+        const result = await db.query('SELECT s3_key FROM videos WHERE id = $1', [videoId]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Video not found' });
+        }
+
+        const s3Key = result.rows[0].s3_key;
+        if (!s3Key) {
+            return res.status(404).json({ error: 'Video file not found' });
+        }
+
+        const command = new GetObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: s3Key,
+        });
+
+        const response = await s3Client.send(command);
+
+        res.setHeader('Content-Type', response.ContentType || 'video/mp4');
+        res.setHeader('Content-Length', response.ContentLength);
+
+        // Pipe the stream to response
+        response.Body.pipe(res);
+
+    } catch (err) {
+        console.error('Error streaming video:', err);
+        res.status(500).json({ error: 'Failed to stream video' });
+    }
+});
+
+// DELETE - Delete content (Generic)
+app.delete('/api/contents/:id', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+
+    const contentId = req.params.id;
+
+    try {
+        // Check content type
+        const contentRes = await db.query('SELECT * FROM contents WHERE id = $1', [contentId]);
+        if (contentRes.rows.length === 0) return res.status(404).json({ error: 'Content not found' });
+
+        const content = contentRes.rows[0];
+
+        // If it's a video, redirect to video deletion logic (which handles S3, embeddings, etc.)
+        if (content.type === 'VIDEO' || content.type === 'video') {
+            const videoRes = await db.query('SELECT id FROM videos WHERE content_id = $1', [contentId]);
+            if (videoRes.rows.length > 0) {
+                // Call the video deletion logic (we can refactor to a function, but for now let's just use the existing route logic or duplicate it safely)
+                // Better: Redirect the request internally or just copy the logic. 
+                // Let's copy the logic to be safe and robust here.
+
+                const videoId = videoRes.rows[0].id;
+
+                await db.query('BEGIN');
+
+                // Get video details for cleanup
+                const videoData = await db.query('SELECT * FROM videos WHERE id = $1', [videoId]);
+                const video = videoData.rows[0];
+
+                // 1. Delete AI embeddings
+                await db.query("DELETE FROM documents WHERE metadata->>'video_id' = $1", [videoId.toString()]);
+
+                // 2. Delete video segments
+                await db.query('DELETE FROM video_segments WHERE video_id = $1', [videoId]);
+
+                // 3. Delete video record
+                await db.query('DELETE FROM videos WHERE id = $1', [videoId]);
+
+                // 4. Delete content record
+                await db.query('DELETE FROM contents WHERE id = $1', [contentId]);
+
+                // 5. Delete from S3
+                if (video.s3_key) {
+                    try {
+                        await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: video.s3_key }));
+                        console.log(`✓ Deleted S3 file: ${video.s3_key}`);
+                    } catch (s3Err) {
+                        console.error(`⚠ Failed to delete S3 file: ${video.s3_key}`, s3Err);
+                    }
+                }
+
+                await db.query('COMMIT');
+                return res.json({ success: true, message: 'Video content deleted successfully' });
+            }
+        }
+
+        // Standard content deletion
+        await db.query('DELETE FROM contents WHERE id = $1', [contentId]);
+        res.json({ success: true, message: 'Content deleted successfully' });
+
+    } catch (err) {
+        console.error('Error deleting content:', err);
+        res.status(500).json({ error: 'Failed to delete content' });
+    }
+});
+
+// --- Video CRUD Routes ---
+
+// GET - List all videos (with optional filtering by module or course)
+app.get('/api/videos', authenticateToken, async (req, res) => {
+    const { module_id, course_id } = req.query;
+
+    try {
+        let query = `
+            SELECT v.*, c.title as content_title, c.module_id, m.course_id
+            FROM videos v
+            JOIN contents c ON v.content_id = c.id
+            JOIN modules m ON c.module_id = m.id
+        `;
+        const params = [];
+        const conditions = [];
+
+        if (module_id) {
+            conditions.push(`c.module_id = $${params.length + 1}`);
+            params.push(module_id);
+        }
+
+        if (course_id) {
+            conditions.push(`m.course_id = $${params.length + 1}`);
+            params.push(course_id);
+        }
+
+        if (conditions.length > 0) {
+            query += ' WHERE ' + conditions.join(' AND ');
+        }
+
+        query += ' ORDER BY v.created_at DESC';
+
+        const result = await db.query(query, params);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching videos:', err);
+        res.status(500).json({ error: 'Failed to fetch videos' });
+    }
+});
+
+// GET - Get single video with full details
+app.get('/api/videos/:id/details', authenticateToken, async (req, res) => {
+    const videoId = req.params.id;
+
+    try {
+        const result = await db.query(`
+            SELECT v.*, c.title as content_title, c.description, c.module_id,
+                   m.title as module_title, m.course_id,
+                   co.title as course_title
+            FROM videos v
+            JOIN contents c ON v.content_id = c.id
+            JOIN modules m ON c.module_id = m.id
+            JOIN courses co ON m.course_id = co.id
+            WHERE v.id = $1
+        `, [videoId]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Video not found' });
+        }
+
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('Error fetching video:', err);
+        res.status(500).json({ error: 'Failed to fetch video' });
+    }
+});
+
+// PUT - Update video metadata (title, description, etc)
+app.put('/api/videos/:id', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+
+    const videoId = req.params.id;
+    const { title, description, status } = req.body;
+
+    try {
+        // Update content record (title and description)
+        const videoCheck = await db.query('SELECT content_id FROM videos WHERE id = $1', [videoId]);
+
+        if (videoCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'Video not found' });
+        }
+
+        const contentId = videoCheck.rows[0].content_id;
+
+        // Update content
+        if (title || description) {
+            const updates = [];
+            const params = [];
+            let paramCount = 1;
+
+            if (title) {
+                updates.push(`title = $${paramCount}`);
+                params.push(title);
+                paramCount++;
+            }
+
+            if (description) {
+                updates.push(`description = $${paramCount}`);
+                params.push(description);
+                paramCount++;
+            }
+
+            params.push(contentId);
+            await db.query(
+                `UPDATE contents SET ${updates.join(', ')} WHERE id = $${paramCount}`,
+                params
+            );
+        }
+
+        // Update video status if provided
+        if (status) {
+            await db.query(
+                'UPDATE videos SET status = $1, updated_at = NOW() WHERE id = $2',
+                [status, videoId]
+            );
+        }
+
+        // Return updated video
+        const updated = await db.query(`
+            SELECT v.*, c.title as content_title, c.description
+            FROM videos v
+            JOIN contents c ON v.content_id = c.id
+            WHERE v.id = $1
+        `, [videoId]);
+
+        res.json(updated.rows[0]);
+    } catch (err) {
+        console.error('Error updating video:', err);
+        res.status(500).json({ error: 'Failed to update video' });
+    }
+});
+
+// DELETE - Delete video and all related data (cascade)
+app.delete('/api/videos/:id', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+
+    const videoId = req.params.id;
+
+    try {
+        await db.query('BEGIN');
+
+        // Get video details for cleanup
+        const videoData = await db.query('SELECT * FROM videos WHERE id = $1', [videoId]);
+
+        if (videoData.rows.length === 0) {
+            await db.query('ROLLBACK');
+            return res.status(404).json({ error: 'Video not found' });
+        }
+
+        const video = videoData.rows[0];
+        const contentId = video.content_id;
+
+        // 1. Delete AI embeddings from documents table
+        await db.query(
+            "DELETE FROM documents WHERE metadata->>'video_id' = $1",
+            [videoId.toString()]
+        );
+        console.log(`✓ Deleted AI embeddings for video ${videoId}`);
+
+        // 2. Delete video segments (if any)
+        await db.query('DELETE FROM video_segments WHERE video_id = $1', [videoId]);
+        console.log(`✓ Deleted video segments for video ${videoId}`);
+
+        // 3. Delete video record (will cascade to related tables if FK configured)
+        await db.query('DELETE FROM videos WHERE id = $1', [videoId]);
+        console.log(`✓ Deleted video record ${videoId}`);
+
+        // 4. Delete content record (will cascade if FK configured)
+        await db.query('DELETE FROM contents WHERE id = $1', [contentId]);
+        console.log(`✓ Deleted content record ${contentId}`);
+
+        // 5. Delete from S3/MinIO if s3_key exists
+        if (video.s3_key) {
+            try {
+                await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: video.s3_key }));
+                console.log(`✓ Deleted S3 file: ${video.s3_key}`);
+            } catch (s3Err) {
+                console.error(`⚠ Failed to delete S3 file: ${video.s3_key}`, s3Err);
+            }
+        }
+
+        await db.query('COMMIT');
+
+        res.json({
+            success: true,
+            message: 'Video and all related data deleted successfully',
+            deletedVideoId: videoId,
+            deletedContentId: contentId
+        });
+
+    } catch (err) {
+        await db.query('ROLLBACK');
+        console.error('Error deleting video:', err);
+        res.status(500).json({ error: 'Failed to delete video' });
     }
 });
 
@@ -209,6 +894,226 @@ app.post('/api/agent', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+// GET - Get single video with full details
+app.get('/api/videos/:id/details', authenticateToken, async (req, res) => {
+    const videoId = req.params.id;
+
+    try {
+        const result = await db.query(`
+            SELECT v.*, c.title as content_title, c.description, c.module_id,
+                   m.title as module_title, m.course_id,
+                   co.title as course_title
+            FROM videos v
+            JOIN contents c ON v.content_id = c.id
+            JOIN modules m ON c.module_id = m.id
+            JOIN courses co ON m.course_id = co.id
+            WHERE v.id = $1
+        `, [videoId]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Video not found' });
+        }
+
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('Error fetching video:', err);
+        res.status(500).json({ error: 'Failed to fetch video' });
+    }
+});
+
+// PUT - Update video metadata (title, description, etc)
+app.put('/api/videos/:id', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+
+    const videoId = req.params.id;
+    const { title, description, status } = req.body;
+
+    try {
+        // Update content record (title and description)
+        const videoCheck = await db.query('SELECT content_id FROM videos WHERE id = $1', [videoId]);
+
+        if (videoCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'Video not found' });
+        }
+
+        const contentId = videoCheck.rows[0].content_id;
+
+        // Update content
+        if (title || description) {
+            const updates = [];
+            const params = [];
+            let paramCount = 1;
+
+            if (title) {
+                updates.push(`title = $${paramCount}`);
+                params.push(title);
+                paramCount++;
+            }
+
+            if (description) {
+                updates.push(`description = $${paramCount}`);
+                params.push(description);
+                paramCount++;
+            }
+
+            params.push(contentId);
+            await db.query(
+                `UPDATE contents SET ${updates.join(', ')} WHERE id = $${paramCount}`,
+                params
+            );
+        }
+
+        // Update video status if provided
+        if (status) {
+            await db.query(
+                'UPDATE videos SET status = $1, updated_at = NOW() WHERE id = $2',
+                [status, videoId]
+            );
+        }
+
+        // Return updated video
+        const updated = await db.query(`
+            SELECT v.*, c.title as content_title, c.description
+            FROM videos v
+            JOIN contents c ON v.content_id = c.id
+            WHERE v.id = $1
+        `, [videoId]);
+
+        res.json(updated.rows[0]);
+    } catch (err) {
+        console.error('Error updating video:', err);
+        res.status(500).json({ error: 'Failed to update video' });
+    }
+});
+
+// DELETE - Delete video and all related data (cascade)
+app.delete('/api/videos/:id', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+
+    const videoId = req.params.id;
+
+    try {
+        await db.query('BEGIN');
+
+        // Get video details for cleanup
+        const videoData = await db.query('SELECT * FROM videos WHERE id = $1', [videoId]);
+
+        if (videoData.rows.length === 0) {
+            await db.query('ROLLBACK');
+            return res.status(404).json({ error: 'Video not found' });
+        }
+
+        const video = videoData.rows[0];
+        const contentId = video.content_id;
+
+        // 1. Delete AI embeddings from documents table
+        await db.query(
+            "DELETE FROM documents WHERE metadata->>'video_id' = $1",
+            [videoId.toString()]
+        );
+        console.log(`✓ Deleted AI embeddings for video ${videoId}`);
+
+        // 2. Delete video segments (if any)
+        await db.query('DELETE FROM video_segments WHERE video_id = $1', [videoId]);
+        console.log(`✓ Deleted video segments for video ${videoId}`);
+
+        // 3. Delete video record (will cascade to related tables if FK configured)
+        await db.query('DELETE FROM videos WHERE id = $1', [videoId]);
+        console.log(`✓ Deleted video record ${videoId}`);
+
+        // 4. Delete content record (will cascade if FK configured)
+        await db.query('DELETE FROM contents WHERE id = $1', [contentId]);
+        console.log(`✓ Deleted content record ${contentId}`);
+
+        // 5. Delete from S3/MinIO if s3_key exists
+        if (video.s3_key) {
+            // TODO: Implement S3 deletion
+            // await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: video.s3_key }));
+            console.log(`⚠ S3 file deletion not implemented yet: ${video.s3_key}`);
+        }
+
+        await db.query('COMMIT');
+
+        res.json({
+            success: true,
+            message: 'Video and all related data deleted successfully',
+            deletedVideoId: videoId,
+            deletedContentId: contentId
+        });
+
+    } catch (err) {
+        await db.query('ROLLBACK');
+        console.error('Error deleting video:', err);
+        res.status(500).json({ error: 'Failed to delete video' });
+    }
+});
+
+// --- Legacy/Existing Routes (kept for compatibility or reference) ---
+
+app.get('/api/health', async (req, res) => {
+    try {
+        const result = await db.query('SELECT NOW()');
+        res.json({ status: 'ok', time: result.rows[0].now });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+app.post('/api/agent', async (req, res) => {
+    const { message, courseId } = req.body;
+    try {
+        const reply = await generateResponse(message, courseId);
+        res.json({ reply });
+    } catch (err) {
+        console.error('Error in agent endpoint:', err);
+        res.status(500).json({ error: 'Internal Server Error', details: err.message });
+    }
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`✓ Server running on port ${PORT}`);
+    console.log('✓ Environment:', process.env.NODE_ENV || 'development');
+    console.log('✓ Database:', process.env.DATABASE_URL ? process.env.DATABASE_URL.split('@')[1] : 'Not configured');
+    console.log('✓ CORS enabled');
+
+    // Verificar Whisper na inicialização
+    (async () => {
+        try {
+            const { exec } = await import('child_process');
+            const { promisify } = await import('util');
+            const { homedir } = await import('os');
+            const { existsSync } = await import('fs');
+            const { join } = await import('path');
+            const execPromise = promisify(exec);
+
+            console.log('\n🔍 Verificando Whisper...');
+
+            // Verificar se Whisper Python module está instalado
+            try {
+                const { stdout } = await execPromise('python3 -c "import whisper; print(whisper.__version__)"');
+                const version = stdout.trim();
+                console.log(`✅ Whisper instalado: v${version}`);
+
+                // Verificar se o modelo está baixado
+                const modelPath = join(homedir(), '.cache', 'whisper', 'medium.pt');
+                if (existsSync(modelPath)) {
+                    console.log('✅ Modelo medium.pt encontrado');
+                    console.log('✅ Transcrição automática: HABILITADA');
+                } else {
+                    console.log('⚠️  Modelo medium.pt NÃO encontrado');
+                    console.log('   Será baixado automaticamente no primeiro uso (~1.4GB)');
+                    console.log('   Para baixar agora: python3 -c "import whisper; whisper.load_model(\'medium\')"');
+                    console.log('⚠️  Transcrição automática: HABILITADA (com download pendente)');
+                }
+            } catch (err) {
+                console.log('❌ Whisper: NÃO INSTALADO');
+                console.log('   Execute: pip3 install openai-whisper');
+                console.log('   Transcrição automática estará DESABILITADA');
+            }
+            console.log('');
+        } catch (error) {
+            console.log('⚠️  Erro ao verificar Whisper:', error.message);
+        }
+    })();
 });
