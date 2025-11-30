@@ -7,7 +7,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Load environment variables from the root .env file
-dotenv.config({ path: resolve(__dirname, '../.env') });
+// Only load .env in development (Docker uses environment variables from docker-compose)
+if (process.env.NODE_ENV !== 'production') {
+    dotenv.config({ path: resolve(__dirname, '../.env') });
+}
 
 const { Pool } = pg;
 
@@ -22,7 +25,7 @@ const pool = new Pool({
 
 // Test the connection
 pool.on('connect', () => {
-    console.log('✓ Connected to PostgreSQL database');
+    console.log(`✓ Connected to PostgreSQL: ${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_DATABASE}`);
 });
 
 pool.on('error', (err) => {

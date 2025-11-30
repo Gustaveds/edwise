@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Course, QuizQuestion, QuizResult, WebhookEvent, ChatMessage, StudyAid } from '../types';
+import { Course, Question, QuizResult, WebhookEvent, ChatMessage, StudyAid } from '../types';
 import { answerQuestion, generateQuiz, generateFlashcards, generateSummary } from '../services/geminiService';
 import { saveQuiz } from '../services/quizService';
 import { sendWebhook } from '../services/webhookService';
@@ -9,6 +9,8 @@ import FeedbackModal from './FeedbackModal';
 import { Bot, User as UserIcon, Send, BrainCircuit, Loader2, ThumbsUp, ThumbsDown, MessageSquarePlus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useAnalytics } from '../contexts/AnalyticsContext';
+
+import config from '../config';
 
 interface ChatAssistantProps {
     course: Course;
@@ -21,7 +23,7 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course }) => {
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[] | null>(null);
+    const [quizQuestions, setQuizQuestions] = useState<Question[] | null>(null);
     const [quizResults, setQuizResults] = useState<QuizResult[] | null>(null);
     const [studyAid, setStudyAid] = useState<StudyAid | null>(null);
     const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
@@ -116,7 +118,7 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course }) => {
                     courseContext,
                     course.title,
                     clampedNumQuestions,
-                    quizResults?.filter((r) => !r.isCorrect).map((r) => r.question),
+                    undefined, // TODO: Store failed questions for retry feature
                 );
                 setQuizQuestions(questions);
                 await saveQuiz(course.id, `Quiz: ${course.title}`, questions);
@@ -125,7 +127,7 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course }) => {
             } else {
                 // Call local backend agent
                 try {
-                    const response = await fetch('http://localhost:3001/api/agent', {
+                    const response = await fetch(`${config.API_URL}/api/agent`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',

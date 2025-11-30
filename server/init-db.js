@@ -96,6 +96,44 @@ async function initDb() {
     `);
     console.log('✅ Table "comments" created.');
 
+    // 8. Videos Table
+    // DROP tables first to ensure schema update (Development only - be careful in prod!)
+    await db.query('DROP TABLE IF EXISTS video_segments CASCADE');
+    await db.query('DROP TABLE IF EXISTS videos CASCADE');
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS videos (
+        id SERIAL PRIMARY KEY,
+        content_id INTEGER REFERENCES contents(id) ON DELETE CASCADE,
+        filename TEXT NOT NULL,
+        s3_key TEXT,
+        status TEXT DEFAULT 'uploading', -- uploading, processing, ready, error
+        transcription TEXT,
+        summary TEXT,
+        metadata JSONB DEFAULT '{}',
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    console.log('✅ Table "videos" created.');
+
+    // 9. Video Segments Table (for RAG)
+    // Ensure pgvector extension is enabled
+    await db.query('CREATE EXTENSION IF NOT EXISTS vector;');
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS video_segments (
+        id SERIAL PRIMARY KEY,
+        video_id INTEGER REFERENCES videos(id) ON DELETE CASCADE,
+        start_time FLOAT NOT NULL,
+        end_time FLOAT NOT NULL,
+        text TEXT NOT NULL,
+        embedding vector(1536),
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    console.log('✅ Table "video_segments" created.');
+
     // Keep existing tables for backward compatibility if needed, or migration
     // Quizzes table might need adjustment to link to contents if we treat quiz as content
     // For now, let's keep the old tables but maybe we won't use them directly in the new flow
@@ -103,7 +141,7 @@ async function initDb() {
     // We'll leave the old tables alone for now to avoid breaking anything existing unexpectedly.
 
     // Create Default Admin if not exists
-    const adminEmail = 'admin@edwise.com';
+    const adminEmail = 'admin@edwise.ai';
     const adminCheck = await db.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
 
     if (adminCheck.rows.length === 0) {
@@ -112,7 +150,22 @@ async function initDb() {
         'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4)',
         ['Admin User', adminEmail, hashedPassword, 'admin']
       );
-      console.log('✅ Default Admin created: admin@edwise.com / admin123');
+      console.log('✅ Default Admin created: admin@edwise.ai / admin123');
+    }
+
+    // Create Default Course (for dev/testing)
+    const courseCheck = await db.query('SELECT * FROM courses WHERE id = 1');
+    if (courseCheck.rows.length === 0) {
+      const adminUser = await db.query('SELECT id FROM users WHERE email = $1', [adminEmail]);
+      if (adminUser.rows.length > 0) {
+        await db.query(
+          'INSERT INTO courses (id, title, description, professor_id) VALUES ($1, $2, $3, $4)',
+          [1, 'Demo Course', 'A demo course for testing.', adminUser.rows[0].id]
+        );
+        // Reset sequence to avoid collision
+        await db.query("SELECT setval('courses_id_seq', (SELECT MAX(id) FROM courses))");
+        console.log('✅ Default Course created: Demo Course (ID 1)');
+      }
     }
 
   } catch (error) {

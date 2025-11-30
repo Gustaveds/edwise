@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { ArrowLeft, Play, CheckCircle, FileText, MessageSquare, Info, Edit3, ChevronRight, Menu } from 'lucide-react';
 import { Course, MaterialType } from '../types';
 import ChatAssistant from './ChatAssistant';
+import VideoAIDisplay from './VideoAIDisplay';
+import { useAuth } from '../contexts/AuthContext';
 
 interface CoursePlayerProps {
     course: Course;
@@ -9,9 +11,10 @@ interface CoursePlayerProps {
 }
 
 const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
+    const { user } = useAuth();
     const [activeModuleId, setActiveModuleId] = useState<string | number | null>(null);
     const [activeContent, setActiveContent] = useState<any>(null);
-    const [activeTab, setActiveTab] = useState<'info' | 'comments' | 'notes'>('info');
+    const [activeTab, setActiveTab] = useState<'info' | 'ai' | 'comments' | 'notes'>('info');
     const [showSidebar, setShowSidebar] = useState(true);
 
     // Mock data structure if not present in course (adapter)
@@ -55,13 +58,33 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                 <div className="flex-1 bg-gray-900 flex items-center justify-center relative">
                     {activeContent ? (
                         activeContent.type === 'video' ? (
-                            <div className="w-full h-full flex items-center justify-center bg-black">
-                                {/* Placeholder for Video Player */}
-                                <div className="text-center">
-                                    <Play className="w-20 h-20 text-white/20 mx-auto mb-4" />
-                                    <p className="text-gray-400">Reproduzindo: {activeContent.title}</p>
-                                    <p className="text-xs text-gray-600 mt-2">{activeContent.content}</p>
-                                </div>
+                            <div className="w-full h-full bg-black">
+                                {activeContent.video_id && activeContent.data?.s3_key ? (
+                                    <video
+                                        className="w-full h-full"
+                                        controls
+                                        controlsList="nodownload"
+                                        src={`${process.env.REACT_APP_MINIO_ENDPOINT || 'http://localhost:9000'}/${process.env.REACT_APP_MINIO_BUCKET || 'edwise'}/${activeContent.data.s3_key}`}
+                                    >
+                                        Seu navegador não suporta a tag de vídeo.
+                                    </video>
+                                ) : activeContent.content ? (
+                                    // External video (YouTube, Vimeo, etc)
+                                    <iframe
+                                        className="w-full h-full"
+                                        src={activeContent.content}
+                                        title={activeContent.title}
+                                        frameBorder="0"
+                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                        allowFullScreen
+                                    />
+                                ) : (
+                                    <div className="text-center">
+                                        <Play className="w-20 h-20 text-white/20 mx-auto mb-4" />
+                                        <p className="text-gray-400">Processando vídeo...</p>
+                                        <p className="text-xs text-gray-600 mt-2">Aguarde o processamento ser concluído</p>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <div className="w-full h-full p-8 overflow-y-auto bg-white text-gray-900">
@@ -100,6 +123,13 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                             <Edit3 className="w-4 h-4 mr-2" />
                             Anotações
                         </button>
+                        <button
+                            onClick={() => setActiveTab('ai')}
+                            className={`px-6 py-3 flex items-center text-sm font-medium transition-colors ${activeTab === 'ai' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'}`}
+                        >
+                            <MessageSquare className="w-4 h-4 mr-2" />
+                            IA
+                        </button>
                     </div>
                     <div className="flex-1 p-6 overflow-y-auto">
                         {activeTab === 'info' && (
@@ -122,9 +152,23 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                         )}
                         {activeTab === 'notes' && (
                             <textarea
-                                className="w-full h-full bg-gray-800 text-white p-4 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 outline-none"
+                                className="w-full h-full bg-gray-800 text-white p-4 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 outline-none text-gray-900"
                                 placeholder="Faça suas anotações aqui..."
                             />
+                        )}
+                        {activeTab === 'ai' && activeContent?.video_id && (
+                            <div className="bg-gray-800 rounded-lg p-4">
+                                <VideoAIDisplay
+                                    videoId={activeContent.video_id}
+                                    isOwner={user?.role === 'professor' || user?.role === 'admin'}
+                                />
+                            </div>
+                        )}
+                        {activeTab === 'ai' && !activeContent?.video_id && (
+                            <div className="text-center text-gray-500 mt-10">
+                                <Info className="w-10 h-10 mx-auto mb-2 opacity-20" />
+                                <p>Recursos de IA disponíveis apenas para conteúdos de vídeo.</p>
+                            </div>
                         )}
                     </div>
                 </div>
