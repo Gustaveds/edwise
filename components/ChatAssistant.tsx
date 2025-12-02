@@ -1,247 +1,170 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Course, Question, QuizResult, WebhookEvent, ChatMessage, StudyAid } from '../types';
+import { Course, QuizQuestion, QuizResult, ChatMessage, StudyAid } from '../types';
 import { answerQuestion, generateQuiz, generateFlashcards, generateSummary } from '../services/geminiService';
-import { saveQuiz } from '../services/quizService';
-import { sendWebhook } from '../services/webhookService';
 import QuizView from './QuizView';
 import StudyAidView from './StudyAidView';
 import FeedbackModal from './FeedbackModal';
-import { Bot, User as UserIcon, Send, BrainCircuit, Loader2, ThumbsUp, ThumbsDown, MessageSquarePlus } from 'lucide-react';
+import { Bot, User as UserIcon, Send, Loader2, ThumbsUp, ThumbsDown, MessageSquarePlus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useAnalytics } from '../contexts/AnalyticsContext';
+import QuizModal from './QuizModal';
 
-import config from '../config';
 
 interface ChatAssistantProps {
     course: Course;
+    videoId?: number;
+    externalMessages?: ChatMessage[];
+    onMessagesChange?: (messages: ChatMessage[]) => void;
+    onQuizSaved?: () => void; // Callback when quiz is saved
 }
 
-const ChatAssistant: React.FC<ChatAssistantProps> = ({ course }) => {
-    const { recordInteraction, recordQuizCompletion, recordFeedback } = useAnalytics();
-
-    const [messages, setMessages] = useState<ChatMessage[]>([]);
+const ChatAssistant: React.FC<ChatAssistantProps> = ({ course, videoId, externalMessages, onMessagesChange, onQuizSaved }) => {
+    const { recordInteraction } = useAnalytics();
+    const [messages, setMessages] = useState<ChatMessage[]>(externalMessages || []);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [quizQuestions, setQuizQuestions] = useState<Question[] | null>(null);
-    const [quizResults, setQuizResults] = useState<QuizResult[] | null>(null);
+    const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[] | null>(null);
     const [studyAid, setStudyAid] = useState<StudyAid | null>(null);
     const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
     const [selectedMessageForFeedback, setSelectedMessageForFeedback] = useState<ChatMessage | null>(null);
-
-    const messagesEndRef = useRef<HTMLDivElement | null>(null);
-    const createUniqueId = () => `${Date.now()} -${Math.random()} `;
+    const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     };
 
-    useEffect(scrollToBottom, [messages, isLoading]);
-
     useEffect(() => {
-        const initialMessage: ChatMessage = {
-            id: createUniqueId(),
-            sender: 'ai',
-            text: `Olá! Eu sou seu assistente de IA para ** ${course.title}**.Faça uma pergunta, peça para 'gerar um quiz', 'gerar flashcards' ou 'resumir a sessão'.`,
-        };
-        setMessages([initialMessage]);
-        recordInteraction({
-            courseId: course.id,
-            courseTitle: course.title,
-            sender: initialMessage.sender,
-            text: initialMessage.text,
-        });
-        setQuizQuestions(null);
-        setQuizResults(null);
-        setStudyAid(null);
-    }, [course, recordInteraction]);
+        scrollToBottom();
+    }, [messages]);
+
+    // Sync messages with parent component
+    useEffect(() => {
+        if (onMessagesChange) {
+            onMessagesChange(messages);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [messages]);
+
+    // Load external messages when provided
+    useEffect(() => {
+        if (externalMessages && externalMessages.length > 0) {
+            setMessages(externalMessages);
+        }
+    }, [externalMessages]);
+
+    // Add welcome message on mount if no messages
+    useEffect(() => {
+        if (messages.length === 0 && !externalMessages) {
+            const welcomeMessage: ChatMessage = {
+                id: 'welcome',
+                text: `Olá! Eu sou seu assistente de IA para **"${course.title}"**. Faça uma pergunta ou use os comandos:\n\n• \`/quiz\` - Gerar um quiz \n • \`/flashcards\` - Gerar flashcards \n • \`/summary\` - Resumir a sessão`,
+                sender: 'ai',
+            };
+            setMessages([welcomeMessage]);
+        }
+    }, []);
 
     const handleSend = async () => {
-        if (!input.trim() || isLoading) return;
+        if (!input.trim()) return;
 
-        const userMessage: ChatMessage = { id: createUniqueId(), sender: 'user', text: input };
-        const updatedMessages = [...messages, userMessage];
-        setMessages(updatedMessages);
-        recordInteraction({
-            courseId: course.id,
-            courseTitle: course.title,
-            sender: userMessage.sender,
-            text: userMessage.text,
-        });
+        const userMessage: ChatMessage = {
+            id: Date.now().toString(),
+            text: input,
+            sender: 'user',
+        };
 
-        // Send webhook for student question
-        sendWebhook({
-            eventType: WebhookEvent.STUDENT_QUESTION,
-            courseId: course.id,
-            courseTitle: course.title,
-            studentMessage: userMessage.text,
-            timestamp: new Date().toISOString(),
-        }).catch((err) => {
-            console.error('Failed to send student question webhook:', err);
-        });
-
-        const userInput = input;
+        setMessages((prev) => [...prev, userMessage]);
         setInput('');
         setIsLoading(true);
         setError(null);
-        setQuizQuestions(null);
-        setStudyAid(null);
 
         try {
-            const courseContext = course.materials
-                .map((m) => `Title: ${m.title} \nContent: ${m.content} `)
-                .join('\n\n');
-            let aiResponse: string | null = null;
+            const lowerInput = input.toLowerCase();
 
-            const lowerCaseInput = userInput.toLowerCase();
-
-            if (lowerCaseInput.includes('flashcard')) {
-                const topicMatch = lowerCaseInput.match(/(?:sobre|de)\s+(.+)/);
-                const topic = topicMatch ? topicMatch[1] : course.title;
-                const flashcards = await generateFlashcards(courseContext, topic);
-                setStudyAid({ type: 'flashcards', content: flashcards });
-                aiResponse = `Claro! Preparei alguns flashcards sobre "${topic}" para você.`;
-            } else if (lowerCaseInput.includes('resuma') || lowerCaseInput.includes('resumo')) {
-                const summary = await generateSummary(courseContext, updatedMessages);
-                setStudyAid({ type: 'summary', content: summary });
-                aiResponse = 'Aqui está um resumo da nossa conversa até agora.';
-            } else if (lowerCaseInput.includes('quiz')) {
-                const numberMatch = lowerCaseInput.match(/\d+/);
-                let numQuestions = 4;
-                if (numberMatch) {
-                    numQuestions = parseInt(numberMatch[0], 10);
-                }
-
-                const clampedNumQuestions = Math.max(1, Math.min(20, numQuestions));
-
-                const questions = await generateQuiz(
-                    courseContext,
-                    course.title,
-                    clampedNumQuestions,
-                    undefined, // TODO: Store failed questions for retry feature
-                );
-                setQuizQuestions(questions);
-                await saveQuiz(course.id, `Quiz: ${course.title}`, questions);
-                aiResponse = `Eu gerei um quiz com ${questions.length} ${questions.length === 1 ? 'pergunta' : 'perguntas'
-                    } para você! Por favor, responda às perguntas abaixo.`;
-            } else {
-                // Call local backend agent
-                try {
-                    const response = await fetch(`${config.API_URL}/api/agent`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            message: userInput,
-                            courseId: course.id,
-                        }),
-                    });
-
-                    if (!response.ok) {
-                        throw new Error(`Backend error: ${response.status} `);
-                    }
-
-                    const data = await response.json();
-                    aiResponse = data.reply;
-                } catch (backendError) {
-                    console.error("Error calling local backend:", backendError);
-                    // Fallback to Gemini or show error
-                    aiResponse = "Erro ao conectar com o agente local. Verifique se o servidor está rodando.";
-                }
-            }
-
-            if (aiResponse) {
-                const aiMessage: ChatMessage = { id: createUniqueId(), sender: 'ai', text: aiResponse };
+            // Detect quiz generation (with or without slash)
+            if (input.startsWith('/quiz') || lowerInput.includes('gere quiz') || lowerInput.includes('gerar quiz') || lowerInput.includes('criar quiz')) {
+                const topic = input.replace('/quiz', '').replace(/gere quiz/i, '').replace(/gerar quiz/i, '').replace(/criar quiz/i, '').trim() || 'General';
+                const quizData = await generateQuiz(Number(course.id), videoId, topic);
+                setQuizQuestions(quizData.questions);
+                const aiMessage: ChatMessage = {
+                    id: (Date.now() + 1).toString(),
+                    text: quizData.saved
+                        ? `Aqui está um quiz sobre ${topic}. Boa sorte! (Quiz salvo automaticamente)`
+                        : `Aqui está um quiz sobre ${topic}. Boa sorte!`,
+                    sender: 'ai',
+                };
                 setMessages((prev) => [...prev, aiMessage]);
-                recordInteraction({
-                    courseId: course.id,
-                    courseTitle: course.title,
-                    sender: aiMessage.sender,
-                    text: aiMessage.text,
-                });
             }
-        } catch (e: any) {
-            const messageText = e?.message || 'Ocorreu um erro inesperado.';
-            setError(messageText);
-            const errorMessage: ChatMessage = {
-                id: createUniqueId(),
-                sender: 'ai',
-                text: `Desculpe, encontrei um erro: ${messageText} `,
-            };
-            setMessages((prev) => [...prev, errorMessage]);
-            recordInteraction({
-                courseId: course.id,
-                courseTitle: course.title,
-                sender: errorMessage.sender,
-                text: errorMessage.text,
-            });
+            // Detect flashcards generation
+            else if (input.startsWith('/flashcards') || lowerInput.includes('gere flashcard') || lowerInput.includes('gerar flashcard') || lowerInput.includes('criar flashcard')) {
+                const topic = input.replace('/flashcards', '').replace(/gere flashcards?/i, '').replace(/gerar flashcards?/i, '').replace(/criar flashcards?/i, '').trim() || 'General';
+                const cards = await generateFlashcards(Number(course.id), videoId, topic);
+                setStudyAid({ type: 'flashcards', content: cards });
+                const aiMessage: ChatMessage = {
+                    id: (Date.now() + 1).toString(),
+                    text: `Gerei alguns flashcards para você sobre ${topic}. (Salvos automaticamente)`,
+                    sender: 'ai',
+                };
+                setMessages((prev) => [...prev, aiMessage]);
+            }
+            // Detect summary generation
+            else if (input.startsWith('/summary') || lowerInput.includes('resumir') || lowerInput.includes('resumo') || lowerInput.includes('gere resumo')) {
+                const topic = input.replace('/summary', '').replace(/resumir/i, '').replace(/resumo/i, '').replace(/gere resumo/i, '').replace(/a sessão/i, '').trim() || 'General';
+                const summary = await generateSummary(course.title, messages);
+                setStudyAid({ type: 'summary', content: summary });
+                const aiMessage: ChatMessage = {
+                    id: (Date.now() + 1).toString(),
+                    text: `Aqui está um resumo sobre ${topic}.`,
+                    sender: 'ai',
+                };
+                setMessages((prev) => [...prev, aiMessage]);
+            }
+            // Regular question
+            else {
+                const response = await answerQuestion(input, Number(course.id), videoId);
+                const aiMessage: ChatMessage = {
+                    id: (Date.now() + 1).toString(),
+                    text: response,
+                    sender: 'ai',
+                };
+                setMessages((prev) => [...prev, aiMessage]);
+            }
+            recordInteraction({ courseId: course.id, courseTitle: course.title, sender: 'user', text: input });
+        } catch (err) {
+            console.error('Error sending message:', err);
+            setError('Falha ao obter resposta. Por favor, tente novamente.');
         } finally {
             setIsLoading(false);
         }
     };
 
-    const handleQuizComplete = (results: QuizResult[]) => {
-        setQuizResults(results);
+    const handleQuizComplete = async (results: QuizResult[]) => {
         setQuizQuestions(null);
-
-        const correctAnswers = results.filter((r) => r.isCorrect).length;
-        const totalQuestions = results.length;
-        const score = totalQuestions > 0 ? (correctAnswers / totalQuestions) * 100 : 0;
-
-        const messageText = `Quiz completo! Você acertou ${correctAnswers} de ${totalQuestions}.` +
-            `Gostaria de tentar outro quiz focado nos tópicos em que errou ? É só pedir para 'gerar um quiz' novamente.`;
-
+        const correct = results.filter(r => r.isCorrect).length;
+        const total = results.length;
         const aiMessage: ChatMessage = {
-            id: createUniqueId(),
+            id: Date.now().toString(),
+            text: `Você completou o quiz! Pontuação: ${correct}/${total}`,
             sender: 'ai',
-            text: messageText,
         };
         setMessages((prev) => [...prev, aiMessage]);
-        recordInteraction({
-            courseId: course.id,
-            courseTitle: course.title,
-            sender: aiMessage.sender,
-            text: aiMessage.text,
-        });
 
-        recordQuizCompletion({
-            courseId: course.id,
-            courseTitle: course.title,
-            results,
-        });
-
-        sendWebhook({
-            eventType: WebhookEvent.QUIZ_COMPLETED,
-            courseId: course.id,
-            courseTitle: course.title,
-            results,
-            score,
-            total: totalQuestions,
-            timestamp: new Date().toISOString(),
-        }).catch((err) => {
-            console.error('Failed to send quiz completion webhook:', err);
-        });
+        // Notify parent that quiz was completed (it was auto-saved on generation)
+        if (onQuizSaved) {
+            onQuizSaved();
+        }
     };
 
-    const handleFeedback = (messageId: string, feedback: 'positive' | 'negative') => {
-        setMessages((prevMessages) => {
-            const next = prevMessages.map((msg) =>
-                msg.id === messageId ? { ...msg, feedback } : msg,
-            );
 
-            const target = prevMessages.find((msg) => msg.id === messageId);
-            if (target) {
-                recordFeedback({
-                    courseId: course.id,
-                    courseTitle: course.title,
-                    type: feedback,
-                    message: target.text,
-                });
-            }
-
-            return next;
-        });
+    const handleFeedback = (messageId: string, type: 'positive' | 'negative') => {
+        setMessages(prev => prev.map(msg =>
+            msg.id === messageId ? { ...msg, feedback: type } : msg
+        ));
+        const msg = messages.find(m => m.id === messageId);
+        if (msg) {
+            recordInteraction({ courseId: course.id, courseTitle: course.title, sender: msg.sender, text: `Feedback: ${type}` });
+        }
     };
 
     const handleOpenFeedbackModal = (message: ChatMessage) => {
@@ -249,51 +172,45 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course }) => {
         setIsFeedbackModalOpen(true);
     };
 
-    const handleFeedbackSubmit = (feedbackText: string) => {
-        if (!selectedMessageForFeedback) return;
-
-        setMessages((prevMessages) =>
-            prevMessages.map((msg) =>
-                msg.id === selectedMessageForFeedback.id ? { ...msg, feedbackText } : msg,
-            ),
-        );
-
-        recordFeedback({
-            courseId: course.id,
-            courseTitle: course.title,
-            type: 'negative',
-            message: selectedMessageForFeedback.text,
-            feedbackText,
-        });
-
+    const handleFeedbackSubmit = (text: string) => {
+        if (selectedMessageForFeedback) {
+            setMessages(prev => prev.map(msg =>
+                msg.id === selectedMessageForFeedback.id ? { ...msg, feedbackText: text } : msg
+            ));
+            recordInteraction({ courseId: course.id, courseTitle: course.title, sender: 'user', text: `Detailed feedback: ${text}` });
+        }
         setIsFeedbackModalOpen(false);
         setSelectedMessageForFeedback(null);
     };
 
     return (
         <>
-            {studyAid && <StudyAidView aid={studyAid} onClose={() => setStudyAid(null)} />}
+            {studyAid && <StudyAidView aid={studyAid} onClose={() => setStudyAid(null)} courseId={course.id} />}
             <FeedbackModal
                 isOpen={isFeedbackModalOpen}
                 onClose={() => setIsFeedbackModalOpen(false)}
                 onSubmit={handleFeedbackSubmit}
                 messageText={selectedMessageForFeedback?.text || ''}
             />
-            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg flex flex-col h-[70vh] max-h-[800px]">
-                <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center space-x-3">
-                    <div className="bg-blue-100 dark:bg-blue-900/50 p-2 rounded-full">
-                        <BrainCircuit className="w-6 h-6 text-blue-700 dark:text-blue-400" />
-                    </div>
-                    <div>
-                        <h3 className="font-bold text-lg text-gray-800 dark:text-gray-100">Assistente de IA</h3>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">Curso: {course.title}</p>
-                    </div>
-                </div>
+
+            <div className="h-full flex flex-col">
+                {/* Quiz Modal - Opens separately */}
+                {quizQuestions && (
+                    <QuizModal
+                        isOpen={true}
+                        onClose={() => setQuizQuestions(null)}
+                        questions={quizQuestions}
+                        onComplete={handleQuizComplete}
+                        courseName={course.title}
+                    />
+                )}
+
+                {/* Chat messages - always visible */}
                 <div className="flex-1 p-4 overflow-y-auto space-y-4">
                     {messages.map((msg) => (
                         <div
                             key={msg.id}
-                            className={`flex items - end gap - 2 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'
+                            className={`flex items-start gap-2 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'
                                 } `}
                         >
                             {msg.sender === 'ai' && (
@@ -302,12 +219,12 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course }) => {
                                 </div>
                             )}
                             <div
-                                className={`max - w - md p - 3 rounded - 2xl ${msg.sender === 'user'
+                                className={`max-w-[85%] p-3 rounded-2xl ${msg.sender === 'user'
                                     ? 'bg-blue-600 text-white rounded-br-none'
                                     : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-bl-none'
                                     } `}
                             >
-                                <div className="prose prose-sm dark:prose-invert">
+                                <div className="prose prose-sm dark:prose-invert max-w-none">
                                     <ReactMarkdown>{msg.text}</ReactMarkdown>
                                 </div>
                             </div>
@@ -321,7 +238,7 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course }) => {
                                         title="Feedback Positivo"
                                     >
                                         <ThumbsUp
-                                            className={`w - 4 h - 4 transition - colors ${msg.feedback === 'positive'
+                                            className={`w-4 h-4 transition-colors ${msg.feedback === 'positive'
                                                 ? 'text-blue-600'
                                                 : 'text-gray-400 hover:text-blue-600'
                                                 } `}
@@ -335,7 +252,7 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course }) => {
                                         title="Feedback Negativo"
                                     >
                                         <ThumbsDown
-                                            className={`w - 4 h - 4 transition - colors ${msg.feedback === 'negative'
+                                            className={`w-4 h-4 transition-colors ${msg.feedback === 'negative'
                                                 ? 'text-red-600'
                                                 : 'text-gray-400 hover:text-red-600'
                                                 } `}
@@ -349,7 +266,7 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course }) => {
                                         title="Dar feedback detalhado"
                                     >
                                         <MessageSquarePlus
-                                            className={`w - 4 h - 4 transition - colors ${msg.feedbackText
+                                            className={`w-4 h-4 transition-colors ${msg.feedbackText
                                                 ? 'text-blue-600'
                                                 : 'text-gray-400 hover:text-blue-600'
                                                 } `}
@@ -369,45 +286,45 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course }) => {
                             <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-gray-700 flex items-center justify-center flex-shrink-0">
                                 <Bot className="w-5 h-5 text-blue-700 dark:text-blue-400" />
                             </div>
-                            <div className="max-w-md p-3 rounded-2xl bg-gray-100 dark:bg-gray-700 text-gray-800 rounded-bl-none flex items-center space-x-2">
+                            <div className="p-3 rounded-2xl bg-gray-100 dark:bg-gray-700 text-gray-800 rounded-bl-none flex items-center space-x-2">
                                 <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-0" />
                                 <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-150" />
                                 <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-300" />
                             </div>
                         </div>
                     )}
-                    {quizQuestions && <QuizView questions={quizQuestions} onComplete={handleQuizComplete} />}
                     <div ref={messagesEndRef} />
                 </div>
-                <div className="p-4 border-t border-gray-200 dark:border-gray-700">
-                    <div className="flex items-center relative">
-                        <input
-                            type="text"
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                            placeholder="Faça uma pergunta ou gere um recurso..."
-                            className="w-full pl-5 pr-14 py-3 bg-gray-100 text-gray-900 placeholder-gray-500 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow border border-gray-300 dark:bg-gray-900 dark:text-white dark:placeholder-gray-400 dark:border-gray-700"
-                            disabled={isLoading}
-                        />
-                        <button
-                            onClick={handleSend}
-                            disabled={isLoading || !input.trim()}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 text-white bg-blue-600 rounded-full transition-all duration-200 ease-in-out hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-300 dark:disabled:bg-gray-500 disabled:cursor-not-allowed"
-                        >
-                            {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-                        </button>
-                    </div>
-                    {error && (
-                        <p className="mt-2 text-sm text-red-600 dark:text-red-400">
-                            {error}
-                        </p>
-                    )}
+            </div>
+
+            {/* Input field - always visible */}
+            <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+                <div className="flex items-center relative">
+                    <input
+                        type="text"
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                        placeholder="Faça uma pergunta ou gere um recurso..."
+                        className="w-full pl-5 pr-14 py-3 bg-gray-100 text-gray-900 placeholder-gray-500 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow border border-gray-300 dark:bg-gray-900 dark:text-white dark:placeholder-gray-400 dark:border-gray-700"
+                        disabled={isLoading}
+                    />
+                    <button
+                        onClick={handleSend}
+                        disabled={isLoading || !input.trim()}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 text-white bg-blue-600 rounded-full transition-all duration-200 ease-in-out hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-300 dark:disabled:bg-gray-500 disabled:cursor-not-allowed"
+                    >
+                        {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                    </button>
                 </div>
+                {error && (
+                    <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+                        {error}
+                    </p>
+                )}
             </div>
         </>
     );
 };
 
 export default ChatAssistant;
-

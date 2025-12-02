@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { MaterialType } from '../../types';
-import VideoAIDisplay from '../VideoAIDisplay';
+import VideoAIDataPanel from '../VideoAIDataPanel';
 import { Video, Trash2, Play } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import config from '../../config';
 
 interface VideoFormProps {
     onSubmit: (data: any) => void;
@@ -30,7 +31,7 @@ const VideoForm: React.FC<VideoFormProps> = ({ onSubmit, onCancel, initialData }
         if (!confirm('Tem certeza que deseja excluir este vídeo? Esta ação é irreversível.')) return;
 
         try {
-            const res = await fetch(`http://localhost:3001/api/contents/${initialData.id}`, {
+            const res = await fetch(`${config.API_URL}/api/contents/${initialData.id}`, {
                 method: 'DELETE',
                 headers: { Authorization: `Bearer ${token}` }
             });
@@ -95,7 +96,7 @@ const VideoForm: React.FC<VideoFormProps> = ({ onSubmit, onCancel, initialData }
                             <video
                                 controls
                                 className="w-full h-full"
-                                src={`http://localhost:3001/api/videos/${initialData.video_id}/stream?token=${token}`}
+                                src={`${config.API_URL}/api/videos/${initialData.video_id}/stream?token=${token}`}
                             >
                                 Seu navegador não suporta o elemento de vídeo.
                             </video>
@@ -159,12 +160,9 @@ const VideoForm: React.FC<VideoFormProps> = ({ onSubmit, onCancel, initialData }
             {isUploadedVideo && (
                 <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
                     <h3 className="text-lg font-semibold text-gray-800 dark:text-white mb-4">
-                        Processamento com IA
+                        Dados Gerados pela IA
                     </h3>
-                    <VideoAIDisplay
-                        videoId={initialData.video_id}
-                        isOwner={true}
-                    />
+                    <VideoAIDataPanel videoId={initialData.video_id} />
                 </div>
             )}
         </div>

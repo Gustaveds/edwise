@@ -7,24 +7,30 @@ import { generateEmbedding } from './embeddingService.js';
  * @param {number} topK - Number of results to return (default: 25)
  * @returns {Promise<Array>} - Array of relevant documents with metadata
  */
-async function searchDocuments(query, topK = 25) {
+async function searchDocuments(query, topK = 25, filter = {}) {
     try {
         // Generate embedding for the query
         const queryEmbedding = await generateEmbedding(query);
 
         // Perform vector similarity search using pgvector
         // Using cosine similarity (<=> operator in pgvector)
-        const result = await db.query(
-            `SELECT 
+        let sql = `SELECT 
         id,
         content,
         metadata,
         (embedding <=> $1::vector) AS distance
-      FROM documents
-      ORDER BY distance ASC
-      LIMIT $2`,
-            [`[${queryEmbedding.join(',')}]`, topK]
-        );
+      FROM documents`;
+
+        const params = [`[${queryEmbedding.join(',')}]`, topK];
+
+        if (Object.keys(filter).length > 0) {
+            sql += ` WHERE metadata @> $3`;
+            params.push(JSON.stringify(filter));
+        }
+
+        sql += ` ORDER BY distance ASC LIMIT $2`;
+
+        const result = await db.query(sql, params);
 
         return result.rows;
     } catch (error) {
@@ -35,15 +41,18 @@ async function searchDocuments(query, topK = 25) {
 
 /**
  * Get full SRT transcript for a specific video
- * @param {string} videoId - YouTube video ID
- * @returns {Promise<Object|null>} - Video data with SRT or null if not found
+ * @param {string|number} videoId - Video ID
+ * @returns {Promise<Object|null>} - Video data with transcription or null if not found
  */
 async function getVideoSRT(videoId) {
     try {
-        const result = await db.query(
-            'SELECT yt_id, title, srt, url FROM videos WHERE yt_id = $1 LIMIT 1',
-            [videoId]
-        );
+        const result = await db.query(`
+            SELECT v.id, c.title, v.transcription, v.filename, v.s3_key
+            FROM videos v
+            JOIN contents c ON v.content_id = c.id
+            WHERE v.id = $1
+            LIMIT 1
+        `, [videoId]);
 
         return result.rows.length > 0 ? result.rows[0] : null;
     } catch (error) {
@@ -58,9 +67,12 @@ async function getVideoSRT(videoId) {
  */
 async function getAllVideos() {
     try {
-        const result = await db.query(
-            'SELECT yt_id, title, url FROM videos ORDER BY title'
-        );
+        const result = await db.query(`
+            SELECT v.id, c.title, v.filename, v.s3_key
+            FROM videos v
+            JOIN contents c ON v.content_id = c.id
+            ORDER BY c.title
+        `);
         return result.rows;
     } catch (error) {
         console.error('Error fetching videos:', error);

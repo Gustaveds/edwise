@@ -66,7 +66,7 @@ ${captions}
  * @param {string} summary - Video summary
  * @returns {Promise<Array>} - Array of FAQ objects with pergunta and tempo
  */
-async function generateFAQs(parsedSrt, title, summary) {
+async function generateFAQs(parsedSrt, title, summary, videoId = null, updateStage = null) {
     const allFaqs = [];
 
     try {
@@ -105,8 +105,14 @@ Responda apenas utilizando o formato JSON, sem aspas, sem "\`\`\`json" no começ
 
         // Process in batches (every 3 minutes of video)
         const minutes = Object.keys(parsedSrt).map(Number).sort((a, b) => a - b);
+        const totalBatches = Math.ceil(minutes.length / 3);
+
+        if (videoId) {
+            console.log(`[VIDEO-AI] [${videoId}] ❓ Starting FAQ generation: ${totalBatches} batches to process`);
+        }
 
         for (let i = 0; i < minutes.length; i += 3) {
+            const batchNumber = Math.floor(i / 3) + 1;
             const batchMinutes = minutes.slice(i, i + 3);
             const srtChunk = batchMinutes.map(min => {
                 return parsedSrt[min].map((item, idx) =>
@@ -119,6 +125,10 @@ ${srtChunk}
 </SRT>`;
 
             try {
+                if (videoId) {
+                    console.log(`[VIDEO-AI] [${videoId}] ❓ Generating FAQs batch ${batchNumber}/${totalBatches} (minutes ${batchMinutes[0]}-${batchMinutes[batchMinutes.length - 1]})...`);
+                }
+
                 const result = await model.generateContent(prompt);
                 const responseText = result.response.text();
 
@@ -127,11 +137,20 @@ ${srtChunk}
                 const faqs = JSON.parse(cleanText);
                 if (Array.isArray(faqs)) {
                     allFaqs.push(...faqs);
+                    if (videoId) {
+                        console.log(`[VIDEO-AI] [${videoId}] ✅ Batch ${batchNumber}/${totalBatches} completed: +${faqs.length} FAQs (total: ${allFaqs.length})`);
+                    }
                 }
             } catch (error) {
-                console.error(`Error generating FAQs for batch ${i}:`, error);
+                if (videoId) {
+                    console.error(`[VIDEO-AI] [${videoId}] ⚠️  Error in batch ${batchNumber}/${totalBatches}:`, error.message);
+                }
                 // Continue to next batch
             }
+        }
+
+        if (videoId) {
+            console.log(`[VIDEO-AI] [${videoId}] ✅ FAQ generation complete: ${allFaqs.length} total FAQs generated`);
         }
 
         return allFaqs;
@@ -144,52 +163,68 @@ ${srtChunk}
 /**
  * Main function to process video with AI
  * @param {number} videoId - Video ID from database
+ * @param {Function} updateStage - Optional callback to update processing stage
  * @returns {Promise<Object>} - Processing results
  */
-async function processVideoWithAI(videoId) {
+async function processVideoWithAI(videoId, updateStage = null) {
     let tempFiles = [];
     const processingStartTime = Date.now();
+    const timestamp = () => new Date().toISOString();
 
     try {
         console.log(`\n${'▶'.repeat(40)}`);
-        console.log(`🎥 STARTING AI PROCESSING FOR VIDEO ID: ${videoId}`);
+        console.log(`[VIDEO-AI] [${videoId}] 🎥 STARTING AI PROCESSING`);
+        console.log(`[VIDEO-AI] [${videoId}] ⏰ ${timestamp()}`);
         console.log(`${'▶'.repeat(40)}\n`);
 
         // 1. Get video info from database
-        console.log('📋 [1/6] Fetching video metadata from database...');
+        console.log(`[VIDEO-AI] [${videoId}] 📋 [1/6] Fetching video metadata from database...`);
         const videoResult = await db.query('SELECT * FROM videos WHERE id = $1', [videoId]);
         if (videoResult.rows.length === 0) {
             throw new Error('Video not found');
         }
 
         const video = videoResult.rows[0];
-        const contentResult = await db.query('SELECT * FROM contents WHERE id = $1', [video.content_id]);
+        const contentResult = await db.query(`
+            SELECT c.*, m.course_id 
+            FROM contents c 
+            JOIN modules m ON c.module_id = m.id 
+            WHERE c.id = $1
+        `, [video.content_id]);
         const content = contentResult.rows[0];
-        console.log(`✅ Video metadata loaded: "${content.title}"`);
-        console.log(`   S3 Key: ${video.s3_key}\n`);
+        console.log(`[VIDEO-AI] [${videoId}] ✅ Video metadata loaded: "${content.title}" (Course ID: ${content.course_id})`);
+        console.log(`[VIDEO-AI] [${videoId}]    S3 Key: ${video.s3_key}\n`);
 
         // 2. Download video from S3
-        console.log('📥 [2/6] Downloading video from S3...');
+        console.log(`[VIDEO-AI] [${videoId}] 📥 [2/6] Downloading video from S3...`);
+        console.log(`[VIDEO-AI] [${videoId}] ⏰ ${timestamp()}`);
+        if (updateStage) await updateStage(videoId, 'downloading');
+
         const downloadStart = Date.now();
         const videoPath = await downloadVideoFromS3(video.s3_key);
         const downloadDuration = ((Date.now() - downloadStart) / 1000).toFixed(2);
         tempFiles.push(videoPath);
-        console.log(`✅ Video downloaded in ${downloadDuration}s`);
-        console.log(`   Path: ${videoPath}\n`);
+        console.log(`[VIDEO-AI] [${videoId}] ✅ Video downloaded in ${downloadDuration}s`);
+        console.log(`[VIDEO-AI] [${videoId}]    Path: ${videoPath}\n`);
+
+        // ... (rest of the file until loop)
 
         // 3. Extract SRT
-        console.log('🎙️  [3/6] Extracting subtitles/transcription...');
+        console.log(`[VIDEO-AI] [${videoId}] 🎙️  [3/6] Extracting subtitles/transcription...`);
+        console.log(`[VIDEO-AI] [${videoId}] ⏰ ${timestamp()}`);
+        if (updateStage) await updateStage(videoId, 'transcribing');
+
         const srtStart = Date.now();
         let srtContent = await extractSRTFromFile(videoPath);
 
         // If no SRT, use Whisper for transcription (local, free)
         if (!srtContent) {
-            console.log('⚠️  No embedded SRT found in video file');
-            console.log('🎤 Using Whisper for audio transcription (this may take several minutes)...');
+            console.log(`[VIDEO-AI] [${videoId}] ⚠️  No embedded SRT found in video file`);
+            console.log(`[VIDEO-AI] [${videoId}] 🎤 Using Whisper for audio transcription (this may take several minutes)...`);
 
             // Extract audio first
             const audioPath = videoPath.replace('.mp4', '.mp3');
-            console.log('🔊 Extracting audio from video...');
+            console.log(`[VIDEO-AI] [${videoId}] 🔊 Extracting audio from video...`);
             const fs = await import('fs');
             const { createRequire } = await import('module');
             const require = createRequire(import.meta.url);
@@ -203,7 +238,7 @@ async function processVideoWithAI(videoId) {
                     .on('end', () => {
                         const stats = fs.statSync(audioPath);
                         const audioSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
-                        console.log(`✅ Audio extracted: ${audioSizeMB}MB`);
+                        console.log(`[VIDEO-AI] [${videoId}] ✅ Audio extracted: ${audioSizeMB}MB`);
                         resolve();
                     })
                     .on('error', reject)
@@ -213,58 +248,80 @@ async function processVideoWithAI(videoId) {
             tempFiles.push(audioPath);
 
             // Transcribe with Whisper (local)
-            console.log('🧠 Starting Whisper transcription (model: medium)...');
+            console.log(`[VIDEO-AI] [${videoId}] 🧠 Starting Whisper transcription (model: medium)...`);
             const whisperStart = Date.now();
             const { transcribeWithWhisper } = await import('./extractSRT.js');
             srtContent = await transcribeWithWhisper(audioPath);
             const whisperDuration = ((Date.now() - whisperStart) / 1000).toFixed(2);
 
-            console.log(`✅ Whisper transcription completed in ${whisperDuration}s`);
-            console.log(`   Transcript length: ${srtContent.length} characters\n`);
+            console.log(`[VIDEO-AI] [${videoId}] ✅ Whisper transcription completed in ${whisperDuration}s`);
+            console.log(`[VIDEO-AI] [${videoId}]    Transcript length: ${srtContent.length} characters\n`);
         } else {
             const srtDuration = ((Date.now() - srtStart) / 1000).toFixed(2);
-            console.log(`✅ SRT subtitles extracted in ${srtDuration}s`);
-            console.log(`   Transcript length: ${srtContent.length} characters\n`);
+            console.log(`[VIDEO-AI] [${videoId}] ✅ SRT subtitles extracted in ${srtDuration}s`);
+            console.log(`[VIDEO-AI] [${videoId}]    Transcript length: ${srtContent.length} characters\n`);
         }
 
         // 4. Parse SRT
-        console.log('📝 [4/6] Parsing transcript into structured format...');
+        console.log(`[VIDEO-AI] [${videoId}] 📝 [4/6] Parsing transcript into structured format...`);
         const parsedSrt = parseSRT(srtContent);
         const minuteCount = Object.keys(parsedSrt).length;
-        console.log(`✅ Transcript parsed: ${minuteCount} minutes of content\n`);
+        console.log(`[VIDEO-AI] [${videoId}] ✅ Transcript parsed: ${minuteCount} minutes of content\n`);
 
         // 5. Generate summary
-        console.log('🤖 [5/6] Generating AI summary with Gemini...');
+        console.log(`[VIDEO-AI] [${videoId}] 🤖 [5/6] Generating AI summary with Gemini...`);
+        console.log(`[VIDEO-AI] [${videoId}] ⏰ ${timestamp()}`);
+        if (updateStage) await updateStage(videoId, 'generating_summary');
+
         const summaryStart = Date.now();
         const summary = await generateSummary(srtContent, content.title);
         const summaryDuration = ((Date.now() - summaryStart) / 1000).toFixed(2);
-        console.log(`✅ Summary generated in ${summaryDuration}s`);
-        console.log(`   Summary length: ${summary.length} characters\n`);
+        console.log(`[VIDEO-AI] [${videoId}] ✅ Summary generated in ${summaryDuration}s`);
+        console.log(`[VIDEO-AI] [${videoId}]    Summary length: ${summary.length} characters\n`);
 
         // 6. Generate FAQs and prepare embeddings data
-        console.log('❓ [6/6] Generating FAQs with Gemini...');
+        console.log(`[VIDEO-AI] [${videoId}] ❓ [6/7] Generating FAQs with Gemini...`);
+        console.log(`[VIDEO-AI] [${videoId}] ⏰ ${timestamp()}`);
+        if (updateStage) await updateStage(videoId, 'generating_faqs');
+
         const faqStart = Date.now();
-        const faqs = await generateFAQs(parsedSrt, content.title, summary);
+        const faqs = await generateFAQs(parsedSrt, content.title, summary, videoId, updateStage);
         const faqDuration = ((Date.now() - faqStart) / 1000).toFixed(2);
-        console.log(`✅ ${faqs.length} FAQs generated in ${faqDuration}s\n`);
+        console.log(`[VIDEO-AI] [${videoId}] ✅ All FAQs generated in ${faqDuration}s\n`);
 
         // 7. Generate and store embeddings in documents table
-        console.log('🧠 [7/7] Generating and storing embeddings...');
+        console.log(`[VIDEO-AI] [${videoId}] 🧠 [7/7] Generating and storing embeddings...`);
+        console.log(`[VIDEO-AI] [${videoId}] ⏰ ${timestamp()}`);
+        if (updateStage) await updateStage(videoId, 'creating_embeddings');
+
         const embeddingStart = Date.now();
         const contentId = video.content_id;
 
         // Get video URL from content metadata
         const videoUrl = content.data?.s3_key ?
-            `${process.env.MINIO_ENDPOINT}/${process.env.MINIO_BUCKET}/${content.data.s3_key}` :
+            `${process.env.MINIO_SERVER_URL}/${process.env.MINIO_BUCKET}/${content.data.s3_key}` :
             '';
 
         let embeddingCount = 0;
+        const totalFaqs = faqs.length;
+
+        console.log(`[VIDEO-AI] [${videoId}] 🧠 Processing ${totalFaqs} FAQ embeddings...`);
+
         for (const faq of faqs) {
-            const docContent = `${faq.pergunta} tempo: ${faq.tempo}`;
+            embeddingCount++;
+
+            // Log every embedding for detailed progress
+            if (embeddingCount % 5 === 0 || embeddingCount === 1 || embeddingCount === totalFaqs) {
+                console.log(`[VIDEO-AI] [${videoId}]    📊 Creating embedding ${embeddingCount}/${totalFaqs}...`);
+            }
+
+            // Prepend title to content for better context matching
+            const docContent = `No vídeo ${content.title}. ${faq.pergunta} tempo: ${faq.tempo}`;
             const metadata = {
                 video_url: videoUrl,
                 video_id: videoId,
                 content_id: contentId,
+                course_id: content.course_id, // Added course_id for filtering
                 title: content.title,
                 tempo: faq.tempo
             };
@@ -277,18 +334,15 @@ async function processVideoWithAI(videoId) {
                 'INSERT INTO documents (content, metadata, embedding) VALUES ($1, $2, $3)',
                 [docContent, JSON.stringify(metadata), JSON.stringify(embedding)]
             );
-
-            embeddingCount++;
-            if (embeddingCount % 10 === 0) {
-                console.log(`   📊 Progress: ${embeddingCount}/${faqs.length} embeddings stored...`);
-            }
         }
 
         const embeddingDuration = ((Date.now() - embeddingStart) / 1000).toFixed(2);
-        console.log(`✅ All ${faqs.length} FAQ embeddings stored in ${embeddingDuration}s\n`);
+        console.log(`[VIDEO-AI] [${videoId}] ✅ All ${faqs.length} FAQ embeddings stored in ${embeddingDuration}s\n`);
 
         // 8. Update videos table
-        console.log('💾 Updating database with processed data...');
+        console.log(`[VIDEO-AI] [${videoId}] 💾 Updating database with processed data...`);
+        if (updateStage) await updateStage(videoId, 'finalizing');
+
         await db.query(
             `UPDATE videos 
              SET transcription = $1, 
@@ -299,20 +353,21 @@ async function processVideoWithAI(videoId) {
              WHERE id = $4`,
             [srtContent, summary, JSON.stringify(faqs), videoId]
         );
-        console.log('✅ Database updated with AI-generated content\n');
+        console.log(`[VIDEO-AI] [${videoId}] ✅ Database updated with AI-generated content\n`);
 
         // 9. Cleanup temp files
-        console.log('🧹 Cleaning up temporary files...');
+        console.log(`[VIDEO-AI] [${videoId}] 🧹 Cleaning up temporary files...`);
         cleanupFiles(tempFiles);
-        console.log('✅ Temporary files cleaned\n');
+        console.log(`[VIDEO-AI] [${videoId}] ✅ Temporary files cleaned\n`);
 
         const totalDuration = ((Date.now() - processingStartTime) / 1000).toFixed(2);
         console.log(`${'▶'.repeat(40)}`);
-        console.log(`✅ VIDEO PROCESSING COMPLETED SUCCESSFULLY`);
-        console.log(`   Total Duration: ${totalDuration}s`);
-        console.log(`   Summary: ${summary.substring(0, 80)}...`);
-        console.log(`   FAQs: ${faqs.length} questions`);
-        console.log(`   Embeddings: ${faqs.length} stored`);
+        console.log(`[VIDEO-AI] [${videoId}] ✅ VIDEO PROCESSING COMPLETED SUCCESSFULLY`);
+        console.log(`[VIDEO-AI] [${videoId}] ⏰ ${timestamp()}`);
+        console.log(`[VIDEO-AI] [${videoId}]    Total Duration: ${totalDuration}s`);
+        console.log(`[VIDEO-AI] [${videoId}]    Summary: ${summary.substring(0, 80)}...`);
+        console.log(`[VIDEO-AI] [${videoId}]    FAQs: ${faqs.length} questions`);
+        console.log(`[VIDEO-AI] [${videoId}]    Embeddings: ${faqs.length} stored`);
         console.log(`${'▶'.repeat(40)}\n`);
 
         return {
@@ -323,12 +378,15 @@ async function processVideoWithAI(videoId) {
         };
 
     } catch (error) {
-        console.error('Error processing video with AI:', error);
+        console.log(`[VIDEO-AI] [${videoId}] ❌ Error processing video with AI:`, error.message);
+        console.log(`[VIDEO-AI] [${videoId}] ⏰ ${timestamp()}`);
 
         // Cleanup temp files on error
         cleanupFiles(tempFiles);
 
         // Update video status to error
+        if (updateStage) await updateStage(videoId, 'error');
+
         await db.query(
             'UPDATE videos SET status = $1, metadata = jsonb_set(metadata, \'{error}\', $2::jsonb) WHERE id = $3',
             ['error', JSON.stringify(error.message), videoId]

@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  backend:
+    # ✅ CORRETO: Tag separada por ":" 
+    image: thiagouni/edwise-backend:${IMAGE_TAG:-v1.0.1}
+    environment:
+      - NODE_ENV=production
+      - PORT=3010
+
+      # PostgreSQL (External - ***REMOVED_DB_HOST***)
+      - DB_HOST=***REMOVED_DB_HOST***
+      - DB_USER=postgres
+      - DB_PASSWORD=***REMOVED_DB_PASSWORD***
+      - DB_DATABASE=EdWise
+      - DB_PORT=5432
+
+      # Auth
+      - JWT_SECRET=***REMOVED_JWT_SECRET***
+      - GEMINI_API_KEY=***REMOVED_GEMINI_API_KEY***
+
+      # Redis (External - já rodando em outro service)
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=***REMOVED_REDIS_PASSWORD***
+      - REDIS_DB=15
+
+      # MinIO/S3 (External - s3.tgbia.com)
+      - MINIO_SERVER_URL=https://s3.tgbia.com
+      - MINIO_ACCESS_KEY=***REMOVED_MINIO_ACCESS_KEY***
+      - MINIO_SECRET_KEY=***REMOVED_MINIO_SECRET_KEY***
+      - MINIO_BUCKET=edwise
+
+    networks:
+      - tpr_ia
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: any
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=tpr_ia"
+        - "traefik.http.routers.edwise-api.rule=Host(`apiedwise.tgbia.com`)"
+        - "traefik.http.routers.edwise-api.entrypoints=websecure"
+        - "traefik.http.routers.edwise-api.tls=true"
+        - "traefik.http.routers.edwise-api.tls.certresolver=letsencryptresolver"
+        - "traefik.http.routers.edwise-api.service=edwise-api"
+        - "traefik.http.services.edwise-api.loadbalancer.server.port=3010"
+
+        # CORS and Security Headers (Backend)
+        - "traefik.http.middlewares.edwise_cors.headers.accessControlAllowOriginList=https://edwise.tgbia.com"
+        - "traefik.http.middlewares.edwise_cors.headers.accessControlAllowMethods=GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"
+        - "traefik.http.middlewares.edwise_cors.headers.accessControlAllowHeaders=Origin, X-Requested-With, Content-Type, Accept, Authorization"
+        - "traefik.http.middlewares.edwise_cors.headers.accessControlAllowCredentials=true"
+        - "traefik.http.middlewares.edwise_backend_headers.headers.customResponseHeaders.X-Frame-Options=SAMEORIGIN"
+        - "traefik.http.middlewares.edwise_backend_headers.headers.customResponseHeaders.X-Content-Type-Options=nosniff"
+        - "traefik.http.middlewares.edwise_backend_headers.headers.customResponseHeaders.X-XSS-Protection=1; mode=block"
+        - "traefik.http.middlewares.edwise_backend_headers.headers.customResponseHeaders.Strict-Transport-Security=max-age=31536000; includeSubdomains;"
+        - "traefik.http.middlewares.edwise_backend_headers.headers.customResponseHeaders.Referrer-Policy=no-referrer-when-downgrade"
+        - "traefik.http.middlewares.edwise_backend_compress.compress=true"
+
+        - "traefik.http.routers.edwise-api.middlewares=edwise_cors,edwise_backend_headers,edwise_backend_compress"
+
+  frontend:
+    # ✅ CORRETO: thiagouni/edwise-frontend (não thiagouni/edwise)
+    image: thiagouni/edwise-frontend:${IMAGE_TAG:-v1.0.1}
+    networks:
+      - tpr_ia
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: any
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=tpr_ia"
+        - "traefik.http.routers.edwise-front.rule=Host(`edwise.tgbia.com`)"
+        - "traefik.http.routers.edwise-front.entrypoints=websecure"
+        - "traefik.http.routers.edwise-front.tls=true"
+        - "traefik.http.routers.edwise-front.tls.certresolver=letsencryptresolver"
+        - "traefik.http.routers.edwise-front.service=edwise-front"
+        - "traefik.http.services.edwise-front.loadbalancer.server.port=80"
+
+        # Security Headers (Frontend)
+        - "traefik.http.middlewares.edwise_front_headers.headers.customResponseHeaders.X-Frame-Options=SAMEORIGIN"
+        - "traefik.http.middlewares.edwise_front_headers.headers.customResponseHeaders.X-Content-Type-Options=nosniff"
+        - "traefik.http.middlewares.edwise_front_headers.headers.customResponseHeaders.X-XSS-Protection=1; mode=block"
+        - "traefik.http.middlewares.edwise_front_headers.headers.customResponseHeaders.Strict-Transport-Security=max-age=31536000; includeSubdomains;"
+        - "traefik.http.middlewares.edwise_front_headers.headers.customResponseHeaders.Referrer-Policy=no-referrer-when-downgrade"
+        - "traefik.http.middlewares.edwise_front_compress.compress=true"
+        - "traefik.http.routers.edwise-front.middlewares=edwise_front_headers,edwise_front_compress"
+
+networks:
+  tpr_ia:
+    name: tpr_ia
+    external: true
+
+volumes:
+  redis_data:
+    driver: local

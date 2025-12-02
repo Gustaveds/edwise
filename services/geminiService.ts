@@ -1,278 +1,111 @@
-import { GoogleGenAI, Type } from "@google/genai";
-import { Question, Flashcard, Summary, ChatMessage } from '../types';
+import axios from 'axios';
+import { Question, Flashcard, Summary, ChatMessage, QuizQuestion } from '../types';
+import config from '../config';
 
-if (!process.env.API_KEY) {
-    console.warn("API_KEY environment variable not set. Gemini API calls will fail.");
-}
+// API Configuration
+const API_URL = import.meta.env.VITE_API_URL || config.API_URL + '';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-const quizSchema = {
-    type: Type.OBJECT,
-    properties: {
-        questions: {
-            type: Type.ARRAY,
-            description: "Uma lista de perguntas do quiz.",
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    question: {
-                        type: Type.STRING,
-                        description: "O texto da pergunta."
-                    },
-                    options: {
-                        type: Type.ARRAY,
-                        description: "Uma lista de 4 opções de múltipla escolha.",
-                        items: {
-                            type: Type.STRING
-                        }
-                    },
-                    correctAnswer: {
-                        type: Type.STRING,
-                        description: "A resposta correta dentre as opções."
-                    }
-                },
-                required: ["question", "options", "correctAnswer"]
-            }
-        }
+// Create axios instance with auth interceptor
+const api = axios.create({
+    baseURL: API_URL,
+    headers: {
+        'Content-Type': 'application/json',
     },
-    required: ["questions"]
-};
+});
 
-const keyPointsSchema = {
-    type: Type.OBJECT,
-    properties: {
-        keyPoints: {
-            type: Type.ARRAY,
-            description: "Uma lista de 5 a 10 objetivos de aprendizado chave ou pontos principais.",
-            items: {
-                type: Type.STRING
-            }
-        }
-    },
-    required: ["keyPoints"]
-};
+// Add JWT token to all requests
+api.interceptors.request.use((config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
 
-const flashcardSchema = {
-    type: Type.OBJECT,
-    properties: {
-        flashcards: {
-            type: Type.ARRAY,
-            description: "Uma lista de flashcards, cada um com uma pergunta e uma resposta.",
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    question: {
-                        type: Type.STRING,
-                        description: "O lado da 'pergunta' do flashcard (um termo, conceito ou pergunta)."
-                    },
-                    answer: {
-                        type: Type.STRING,
-                        description: "O lado da 'resposta' do flashcard (a definição, explicação ou resposta)."
-                    }
-                },
-                required: ["question", "answer"]
-            }
-        }
-    },
-    required: ["flashcards"]
-};
-
-const summarySchema = {
-    type: Type.OBJECT,
-    properties: {
-        title: {
-            type: Type.STRING,
-            description: "Um título conciso para o resumo da sessão."
-        },
-        points: {
-            type: Type.ARRAY,
-            description: "Uma lista de 3 a 7 pontos-chave que resumem a conversa.",
-            items: {
-                type: Type.STRING
-            }
-        }
-    },
-    required: ["title", "points"]
-};
-
-
+/**
+ * Extract key learning points from course material
+ */
 export const extractKeyPoints = async (context: string): Promise<string[]> => {
     try {
-        const prompt = `Com base no seguinte material de curso, extraia os 5 a 10 principais objetivos de aprendizado ou pontos-chave. Apresente-os como uma lista concisa. Esta lista será mostrada ao professor para confirmar o entendimento da IA sobre o material.
-
-        Material do Curso:
-        ---
-        ${context}
-        ---
-        `;
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: keyPointsSchema,
-            },
-        });
-
-        const jsonText = response.text.trim();
-        const result = JSON.parse(jsonText);
-
-        if (result && result.keyPoints && Array.isArray(result.keyPoints)) {
-            return result.keyPoints as string[];
-        } else {
-            throw new Error("Formato de pontos-chave inválido recebido da API.");
-        }
-    } catch (error) {
+        const response = await api.post('/api/ai/extract-key-points', { context });
+        return response.data.keyPoints;
+    } catch (error: any) {
         console.error("Erro ao extrair pontos-chave:", error);
-        throw new Error("Falha ao extrair pontos-chave. Por favor, verifique sua chave de API e tente novamente.");
+        throw new Error(error.response?.data?.error || "Falha ao extrair pontos-chave.");
     }
 };
 
-
-export const generateQuiz = async (context: string, topic: string, numberOfQuestions: number = 4, failedQuestions?: Question[]): Promise<Question[]> => {
+/**
+ * Generate a quiz based on course material using RAG
+ */
+export const generateQuiz = async (
+    courseId: number,
+    videoId: number | undefined,
+    topic: string,
+    numberOfQuestions: number = 4,
+    failedQuestions?: QuizQuestion[]
+): Promise<{ id: number; questions: QuizQuestion[]; saved: boolean }> => {
     try {
-        let prompt = `Com base no seguinte material de curso sobre "${topic}", gere um quiz de múltipla escolha com ${numberOfQuestions} ${numberOfQuestions === 1 ? 'pergunta' : 'perguntas'} para testar a compreensão de um aluno. Cada pergunta deve ter 4 opções.
-
-        Material do Curso:
-        ---
-        ${context}
-        ---
-        `;
-
-        if (failedQuestions && failedQuestions.length > 0) {
-            prompt = `Um aluno teve dificuldades com as seguintes perguntas sobre "${topic}". Gere um novo quiz de múltipla escolha com ${numberOfQuestions} ${numberOfQuestions === 1 ? 'pergunta' : 'perguntas'} que foque nos mesmos conceitos subjacentes, mas com perguntas e opções diferentes. Isso o ajudará a praticar e reforçar seu aprendizado.
-
-             Perguntas erradas anteriormente:
-             ---
-             ${JSON.stringify(failedQuestions, null, 2)}
-             ---
-             
-             Material Original do Curso para contexto:
-             ---
-             ${context}
-             ---
-             `;
-        }
-
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: quizSchema,
-            },
+        const response = await api.post('/api/ai/generate-quiz', {
+            courseId,
+            videoId,
+            topic,
+            numberOfQuestions,
+            failedQuestions
         });
-
-        const jsonText = response.text.trim();
-        const result = JSON.parse(jsonText);
-
-        if (result && result.questions && Array.isArray(result.questions)) {
-            return result.questions as Question[];
-        } else {
-            throw new Error("Formato de quiz inválido recebido da API.");
-        }
-    } catch (error) {
+        return response.data;
+    } catch (error: any) {
         console.error("Erro ao gerar quiz:", error);
-        throw new Error("Falha ao gerar o quiz. Por favor, verifique sua chave de API e tente novamente.");
+        throw new Error(error.response?.data?.error || "Falha ao gerar o quiz.");
     }
 };
 
-export const answerQuestion = async (context: string, question: string): Promise<string> => {
+/**
+ * Answer a student question based on course material using RAG
+ */
+export const answerQuestion = async (question: string, courseId: number, videoId?: number): Promise<string> => {
     try {
-        const prompt = `Você é "EdWise", um tutor de IA amigável e prestativo. Um aluno tem uma pergunta sobre o curso. Com base APENAS no material do curso fornecido, responda à pergunta do aluno de forma clara e concisa. Se a resposta não estiver no material, diga "Desculpe, não consegui encontrar uma resposta para isso no material do curso fornecido."
-
-        Material do Curso:
-        ---
-        ${context}
-        ---
-
-        Pergunta do Aluno: "${question}"
-        `;
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
+        const response = await api.post('/api/ai/answer-question', {
+            question,
+            courseId,
+            videoId
         });
-
-        return response.text;
-    } catch (error) {
+        return response.data.answer;
+    } catch (error: any) {
         console.error("Erro ao responder pergunta:", error);
-        throw new Error("Falha ao obter uma resposta. Por favor, verifique sua chave de API e tente novamente.");
+        throw new Error(error.response?.data?.error || "Falha ao obter uma resposta.");
     }
 };
 
-export const generateFlashcards = async (context: string, topic: string): Promise<Flashcard[]> => {
+/**
+ * Generate flashcards for a specific topic using RAG
+ */
+export const generateFlashcards = async (courseId: number, videoId: number | undefined, topic: string): Promise<Flashcard[]> => {
     try {
-        const prompt = `Com base no seguinte material de curso, gere 5-10 flashcards sobre o tópico específico de "${topic}". Cada flashcard deve ter uma pergunta clara e uma resposta concisa.
-
-        Material do Curso para Contexto:
-        ---
-        ${context}
-        ---
-        `;
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: flashcardSchema,
-            },
+        const response = await api.post('/api/ai/generate-flashcards', {
+            courseId,
+            videoId,
+            topic
         });
-
-        const jsonText = response.text.trim();
-        const result = JSON.parse(jsonText);
-
-        if (result && result.flashcards && Array.isArray(result.flashcards)) {
-            return result.flashcards as Flashcard[];
-        } else {
-            throw new Error("Formato de flashcards inválido recebido da API.");
-        }
-    } catch (error) {
+        return response.data.flashcards;
+    } catch (error: any) {
         console.error("Erro ao gerar flashcards:", error);
-        throw new Error("Falha ao gerar flashcards. Por favor, verifique sua chave de API e tente novamente.");
+        throw new Error(error.response?.data?.error || "Falha ao gerar flashcards.");
     }
 };
 
+/**
+ * Generate a summary of a study session
+ */
 export const generateSummary = async (context: string, chatHistory: ChatMessage[]): Promise<Summary> => {
     try {
-        const historyText = chatHistory.map(m => `${m.sender === 'user' ? 'Aluno' : 'IA'}: ${m.text}`).join('\n');
-
-        const prompt = `Você é EdWise, um tutor de IA. Resuma a seguinte sessão de estudo com base no histórico do chat. Identifique os principais tópicos discutidos e crie um resumo conciso para ajudar o aluno a revisar.
-
-        Histórico do Chat:
-        ---
-        ${historyText}
-        ---
-
-        Material do Curso para Contexto (se necessário):
-        ---
-        ${context}
-        ---
-        `;
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: summarySchema,
-            },
+        const response = await api.post('/api/ai/generate-summary', {
+            context,
+            chatHistory
         });
-
-        const jsonText = response.text.trim();
-        const result = JSON.parse(jsonText);
-
-        if (result && result.title && result.points) {
-            return result as Summary;
-        } else {
-            throw new Error("Formato de resumo inválido recebido da API.");
-        }
-    } catch (error) {
+        return response.data.summary;
+    } catch (error: any) {
         console.error("Erro ao gerar resumo:", error);
-        throw new Error("Falha ao gerar o resumo. Por favor, verifique sua chave de API e tente novamente.");
+        throw new Error(error.response?.data?.error || "Falha ao gerar o resumo.");
     }
 };

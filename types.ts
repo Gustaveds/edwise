@@ -26,6 +26,9 @@ export interface Material {
     release_after_days?: number;
     order_index?: number;
     module_id?: number;
+    transcription?: string;
+    summary?: string;
+    video_id?: number;
 }
 
 export interface Question {
@@ -68,11 +71,16 @@ export interface Module {
     subModules?: Module[];
 }
 
+export interface QuizQuestion {
+    question: string;
+    options: string[];
+    correctAnswer: string;
+}
+
 export interface QuizResult {
-    questionId: number;
-    userAnswer: any;
+    question: QuizQuestion;
+    userAnswer: string;
     isCorrect: boolean;
-    score: number;
 }
 
 export interface Flashcard {

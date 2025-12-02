@@ -6,6 +6,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { generateResponse } from './services/geminiAgent.js';
 import { processVideoWithAI } from './services/videoAI.js';
+import { generateQuizWithRag, generateFlashcardsWithRag } from './services/ragAI.js';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import s3Client from './services/minio.js';
@@ -381,6 +382,247 @@ app.post('/api/assignments', authenticateToken, async (req, res) => {
     }
 });
 
+// --- Flashcards Routes ---
+
+// Save a flashcard
+app.post('/api/flashcards', authenticateToken, async (req, res) => {
+    const { course_id, question, answer, source } = req.body;
+    try {
+        const result = await db.query(
+            'INSERT INTO saved_flashcards (user_id, course_id, question, answer, source) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [req.user.id, course_id, question, answer, source]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('Error saving flashcard:', err);
+        res.status(500).json({ error: 'Failed to save flashcard' });
+    }
+});
+
+// Get all flashcards for a course
+app.get('/api/flashcards', authenticateToken, async (req, res) => {
+    const { course_id } = req.query;
+    try {
+        const result = await db.query(
+            'SELECT * FROM saved_flashcards WHERE user_id = $1 AND course_id = $2 ORDER BY created_at DESC',
+            [req.user.id, course_id]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching flashcards:', err);
+        res.status(500).json({ error: 'Failed to fetch flashcards' });
+    }
+});
+
+// Delete a flashcard
+app.delete('/api/flashcards/:id', authenticateToken, async (req, res) => {
+    const flashcardId = req.params.id;
+    try {
+        const result = await db.query(
+            'DELETE FROM saved_flashcards WHERE id = $1 AND user_id = $2 RETURNING *',
+            [flashcardId, req.user.id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Flashcard not found' });
+        }
+        res.json({ success: true, message: 'Flashcard deleted successfully' });
+    } catch (err) {
+        console.error('Error deleting flashcard:', err);
+        res.status(500).json({ error: 'Failed to delete flashcard' });
+    }
+});
+
+// --- Generated Quizzes Routes ---
+
+// Save generated quiz from AI
+app.post('/api/generated-quizzes', authenticateToken, async (req, res) => {
+    const { course_id, title, questions } = req.body;
+    try {
+        const result = await db.query(
+            'INSERT INTO generated_quizzes (user_id, course_id, title, questions) VALUES ($1, $2, $3, $4) RETURNING *',
+            [req.user.id, course_id, title, JSON.stringify(questions)]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('Error saving quiz:', err);
+        res.status(500).json({ error: 'Failed to save quiz' });
+    }
+});
+
+// Get generated quizzes for a course
+app.get('/api/generated-quizzes', authenticateToken, async (req, res) => {
+    const { course_id } = req.query;
+    try {
+        const result = await db.query(
+            'SELECT * FROM generated_quizzes WHERE user_id = $1 AND course_id = $2 ORDER BY created_at DESC',
+            [req.user.id, course_id]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching quizzes:', err);
+        res.status(500).json({ error: 'Failed to fetch quizzes' });
+    }
+});
+
+// Delete a generated quiz
+app.delete('/api/generated-quizzes/:id', authenticateToken, async (req, res) => {
+    const quizId = req.params.id;
+    try {
+        const result = await db.query(
+            'DELETE FROM generated_quizzes WHERE id = $1 AND user_id = $2 RETURNING *',
+            [quizId, req.user.id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Quiz not found' });
+        }
+        res.json({ success: true, message: 'Quiz deleted successfully' });
+    } catch (err) {
+        console.error('Error deleting quiz:', err);
+        res.status(500).json({ error: 'Failed to delete quiz' });
+    }
+});
+
+// --- Notes Routes ---
+
+// Save a note
+app.post('/api/notes', authenticateToken, async (req, res) => {
+    const { course_id, content, video_id, timestamp } = req.body;
+    try {
+        const result = await db.query(
+            'INSERT INTO notes (user_id, course_id, content, video_id, timestamp) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [req.user.id, course_id, content, video_id, timestamp]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('Error saving note:', err);
+        res.status(500).json({ error: 'Failed to save note' });
+    }
+});
+
+// Get all notes for a course or video
+app.get('/api/notes', authenticateToken, async (req, res) => {
+    const { course_id, video_id } = req.query;
+    try {
+        let query = 'SELECT * FROM notes WHERE user_id = $1';
+        const params = [req.user.id];
+
+        if (course_id) {
+            query += ' AND course_id = $2';
+            params.push(course_id);
+        }
+        if (video_id) {
+            query += params.length > 1 ? ' AND video_id = $3' : ' AND video_id = $2';
+            params.push(video_id);
+        }
+
+        query += ' ORDER BY created_at DESC';
+
+        const result = await db.query(query, params);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching notes:', err);
+        res.status(500).json({ error: 'Failed to fetch notes' });
+    }
+});
+
+// Update a note
+app.put('/api/notes/:id', authenticateToken, async (req, res) => {
+    const noteId = req.params.id;
+    const { content } = req.body;
+    try {
+        const result = await db.query(
+            'UPDATE notes SET content = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3 RETURNING *',
+            [content, noteId, req.user.id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Note not found' });
+        }
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('Error updating note:', err);
+        res.status(500).json({ error: 'Failed to update note' });
+    }
+});
+
+// Delete a note
+app.delete('/api/notes/:id', authenticateToken, async (req, res) => {
+    const noteId = req.params.id;
+    try {
+        const result = await db.query(
+            'DELETE FROM notes WHERE id = $1 AND user_id = $2 RETURNING *',
+            [noteId, req.user.id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Note not found' });
+        }
+        res.json({ success: true, message: 'Note deleted successfully' });
+    } catch (err) {
+        console.error('Error deleting note:', err);
+        res.status(500).json({ error: 'Failed to delete note' });
+    }
+});
+
+// --- Chat History Routes ---
+
+// Save chat message
+app.post('/api/chat-history', authenticateToken, async (req, res) => {
+    const { course_id, message, response, video_id } = req.body;
+    try {
+        const result = await db.query(
+            'INSERT INTO chat_history (user_id, course_id, message, response, video_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [req.user.id, course_id, message, response, video_id]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('Error saving chat history:', err);
+        res.status(500).json({ error: 'Failed to save chat history' });
+    }
+});
+
+// Get chat history for a course
+app.get('/api/chat-history', authenticateToken, async (req, res) => {
+    const { course_id, video_id } = req.query;
+    try {
+        let query = 'SELECT * FROM chat_history WHERE user_id = $1';
+        const params = [req.user.id];
+
+        if (course_id) {
+            query += ' AND course_id = $2';
+            params.push(course_id);
+        }
+        if (video_id) {
+            query += params.length > 1 ? ' AND video_id = $3' : ' AND video_id = $2';
+            params.push(video_id);
+        }
+
+        query += ' ORDER BY created_at ASC';
+
+        const result = await db.query(query, params);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching chat history:', err);
+        res.status(500).json({ error: 'Failed to fetch chat history' });
+    }
+});
+
+// Delete chat history
+app.delete('/api/chat-history/:id', authenticateToken, async (req, res) => {
+    const chatId = req.params.id;
+    try {
+        const result = await db.query(
+            'DELETE FROM chat_history WHERE id = $1 AND user_id = $2 RETURNING *',
+            [chatId, req.user.id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Chat message not found' });
+        }
+        res.json({ success: true, message: 'Chat message deleted successfully' });
+    } catch (err) {
+        console.error('Error deleting chat history:', err);
+        res.status(500).json({ error: 'Failed to delete chat history' });
+    }
+});
+
 // --- Video Upload Route ---
 
 app.post('/api/upload/video', authenticateToken, upload.single('video'), async (req, res) => {
@@ -562,6 +804,94 @@ app.get('/api/videos/:id/processing-status', authenticateToken, async (req, res)
     } catch (err) {
         console.error('Error fetching processing status:', err);
         res.status(500).json({ error: 'Failed to fetch processing status' });
+    }
+});
+
+// --- AI Assistant Routes ---
+
+// POST - Answer question using RAG
+app.post('/api/ai/answer-question', authenticateToken, async (req, res) => {
+    const { question, courseId, videoId } = req.body;
+
+    if (!question || !courseId) {
+        return res.status(400).json({ error: 'Question and courseId are required' });
+    }
+
+    try {
+        const response = await generateResponse(question, courseId, req.user.id);
+        res.json({ answer: response });
+    } catch (err) {
+        console.error('Error answering question:', err);
+        res.status(500).json({ error: err.message || 'Failed to answer question' });
+    }
+});
+
+// POST - Generate quiz based on course material with RAG
+app.post('/api/ai/generate-quiz', authenticateToken, async (req, res) => {
+    const { courseId, videoId, topic, numberOfQuestions, failedQuestions } = req.body;
+
+    if (!courseId || !topic) {
+        return res.status(400).json({ error: 'courseId and topic are required' });
+    }
+
+    try {
+        // Generate quiz using RAG
+        const questions = await generateQuizWithRag(
+            courseId,
+            videoId,
+            topic,
+            numberOfQuestions || 4,
+            failedQuestions
+        );
+
+        // Auto-save the quiz
+        const saveResult = await db.query(
+            'INSERT INTO generated_quizzes (user_id, course_id, title, questions) VALUES ($1, $2, $3, $4) RETURNING *',
+            [req.user.id, courseId, `Quiz: ${topic}`, JSON.stringify(questions)]
+        );
+
+        const savedQuiz = saveResult.rows[0];
+
+        res.json({
+            id: savedQuiz.id,
+            questions,
+            saved: true
+        });
+    } catch (err) {
+        console.error('Error generating quiz:', err);
+        res.status(500).json({ error: err.message || 'Failed to generate quiz' });
+    }
+});
+
+// POST - Generate flashcards for a topic with RAG
+app.post('/api/ai/generate-flashcards', authenticateToken, async (req, res) => {
+    const { courseId, videoId, topic } = req.body;
+
+    if (!courseId || !topic) {
+        return res.status(400).json({ error: 'courseId and topic are required' });
+    }
+
+    try {
+        // Generate flashcards using RAG
+        const flashcards = await generateFlashcardsWithRag(courseId, videoId, topic);
+
+        // Auto-save the flashcards
+        const savedFlashcards = [];
+        for (const card of flashcards) {
+            const result = await db.query(
+                'INSERT INTO saved_flashcards (user_id, course_id, question, answer, source) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+                [req.user.id, courseId, card.question, card.answer, `Generated: ${topic}`]
+            );
+            savedFlashcards.push(result.rows[0]);
+        }
+
+        res.json({
+            flashcards: savedFlashcards,
+            saved: true
+        });
+    } catch (err) {
+        console.error('Error generating flashcards:', err);
+        res.status(500).json({ error: err.message || 'Failed to generate flashcards' });
     }
 });
 

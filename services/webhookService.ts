@@ -51,7 +51,7 @@ export const sendWebhook = async (payload: WebhookPayload): Promise<void> => {
     const url = getWebhookUrl(payload.eventType);
 
     if (!url) {
-        console.warn(`URL do Webhook não configurada para o evento "${payload.eventType}". Pulando o envio.`);
+        console.debug(`URL do Webhook não configurada para o evento "${payload.eventType}". Pulando o envio.`);
         return;
     }
 

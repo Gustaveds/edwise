@@ -15,8 +15,6 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [react()],
     define: {
-      'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
       // Ensure VITE_API_URL is available to the client
       'import.meta.env.VITE_API_URL': JSON.stringify(process.env.VITE_API_URL || env.VITE_API_URL)
     },
@@ -32,7 +30,6 @@ export default defineConfig(({ mode }) => {
           manualChunks: {
             vendor: ['react', 'react-dom'],
             ui: ['lucide-react', 'recharts'],
-            genai: ['@google/genai'],
             markdown: ['react-markdown']
           }
         }

@@ -7,7 +7,7 @@ import ForgotPassword from './components/ForgotPassword';
 import Layout from './components/Layout';
 import { UserRole } from './types';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-
+import SavedItemsView from './components/SavedItemsView';
 import AdminDashboard from './components/AdminDashboard';
 
 const AppContent: React.FC = () => {
@@ -26,6 +26,7 @@ const AppContent: React.FC = () => {
   const renderContent = () => {
     if (activeView === 'settings') return <SettingsDashboard />;
     if (activeView === 'admin' && userRole === UserRole.Admin) return <AdminDashboard />;
+    if (activeView === 'saved') return <SavedItemsView />;
 
     // Default Views
     if (userRole === UserRole.Student) {

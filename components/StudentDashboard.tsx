@@ -3,6 +3,7 @@ import { Course, MaterialType } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { Play, Clock, BookOpen } from 'lucide-react';
 import CoursePlayer from './CoursePlayer';
+import config from '../config';
 
 const StudentDashboard: React.FC = () => {
     const { token } = useAuth();
@@ -17,7 +18,7 @@ const StudentDashboard: React.FC = () => {
 
     const fetchCourses = async () => {
         try {
-            const res = await fetch('http://localhost:3001/api/courses', {
+            const res = await fetch(config.API_URL + '/api/courses', {
                 headers: { Authorization: `Bearer ${token}` }
             });
             const data = await res.json();
@@ -31,7 +32,7 @@ const StudentDashboard: React.FC = () => {
 
     const handleCourseClick = async (courseId: string | number) => {
         try {
-            const res = await fetch(`http://localhost:3001/api/courses/${courseId}`, {
+            const res = await fetch(`${config.API_URL}/api/courses/${courseId}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             const data = await res.json();

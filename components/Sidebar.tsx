@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Calendar, BookOpen, Settings, LogOut, User, Shield, Eye } from 'lucide-react';
+import { Home, Calendar, BookOpen, Settings, LogOut, User, Shield, Eye, Star } from 'lucide-react';
 import { UserRole } from '../types';
 
 interface SidebarProps {
@@ -24,6 +24,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const menuItems = [
     { id: 'dashboard', label: 'Home', icon: Home, roles: [UserRole.Student, UserRole.Professor, UserRole.Admin] },
     { id: 'courses', label: 'Meus Cursos', icon: BookOpen, roles: [UserRole.Student, UserRole.Professor, UserRole.Admin] },
+    { id: 'saved', label: 'Meus Recursos', icon: Star, roles: [UserRole.Student] },
     { id: 'calendar', label: 'Calendário', icon: Calendar, roles: [UserRole.Student, UserRole.Professor, UserRole.Admin] },
     { id: 'settings', label: 'Configurações', icon: Settings, roles: [UserRole.Student, UserRole.Professor, UserRole.Admin] },
     { id: 'admin', label: 'Painel Admin', icon: Shield, roles: [UserRole.Admin] },

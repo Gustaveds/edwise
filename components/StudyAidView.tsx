@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StudyAid, Flashcard, Summary } from '../types';
-import { X, RefreshCw, ChevronLeft, ChevronRight, ListChecks } from 'lucide-react';
+import { X, RefreshCw, ChevronLeft, ChevronRight, ListChecks, Save } from 'lucide-react';
+import config from '../config';
 
 // Flashcard Component
 const FlashcardViewer: React.FC<{ flashcards: Flashcard[] }> = ({ flashcards }) => {
@@ -25,11 +26,11 @@ const FlashcardViewer: React.FC<{ flashcards: Flashcard[] }> = ({ flashcards }) 
 
     return (
         <div className="flex flex-col items-center">
-            <div 
+            <div
                 className="w-full max-w-lg h-64 perspective-1000"
                 onClick={handleFlip}
             >
-                <div 
+                <div
                     className={`relative w-full h-full transform-style-preserve-3d transition-transform duration-500 ${isFlipped ? 'rotate-y-180' : ''}`}
                 >
                     {/* Front */}
@@ -44,7 +45,7 @@ const FlashcardViewer: React.FC<{ flashcards: Flashcard[] }> = ({ flashcards }) 
                     </div>
                 </div>
             </div>
-             <style>{`
+            <style>{`
                 .perspective-1000 { perspective: 1000px; }
                 .transform-style-preserve-3d { transform-style: preserve-3d; }
                 .rotate-y-180 { transform: rotateY(180deg); }
@@ -59,7 +60,7 @@ const FlashcardViewer: React.FC<{ flashcards: Flashcard[] }> = ({ flashcards }) 
                         {currentIndex + 1} / {flashcards.length}
                     </span>
                     <button onClick={handleFlip} className="text-sm text-blue-600 dark:text-blue-400 hover:underline flex items-center mt-1">
-                        <RefreshCw className="w-3 h-3 mr-1"/> Virar Cartão
+                        <RefreshCw className="w-3 h-3 mr-1" /> Virar Cartão
                     </button>
                 </div>
                 <button onClick={handleNext} disabled={currentIndex === flashcards.length - 1} className="p-3 rounded-full bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 disabled:opacity-50 text-gray-700 dark:text-gray-200">
@@ -74,8 +75,8 @@ const FlashcardViewer: React.FC<{ flashcards: Flashcard[] }> = ({ flashcards }) 
 const SummaryViewer: React.FC<{ summary: Summary }> = ({ summary }) => {
     return (
         <div className="w-full max-w-2xl mx-auto">
-             <h4 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center mb-4">
-                <ListChecks className="w-6 h-6 mr-3 text-blue-600 dark:text-blue-400"/>
+            <h4 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center mb-4">
+                <ListChecks className="w-6 h-6 mr-3 text-blue-600 dark:text-blue-400" />
                 {summary.title}
             </h4>
             <ul className="space-y-3 bg-gray-50 dark:bg-gray-700 p-5 rounded-lg border dark:border-gray-600">
@@ -90,24 +91,65 @@ const SummaryViewer: React.FC<{ summary: Summary }> = ({ summary }) => {
     )
 }
 
+
+
+// ... FlashcardViewer and SummaryViewer components
+
 interface StudyAidViewProps {
     aid: StudyAid;
     onClose: () => void;
+    courseId: string;
 }
 
-const StudyAidView: React.FC<StudyAidViewProps> = ({ aid, onClose }) => {
+const StudyAidView: React.FC<StudyAidViewProps> = ({ aid, onClose, courseId }) => {
+    const handleSave = async () => {
+        if (aid.type !== 'flashcards') return;
+
+        try {
+            const response = await fetch(`${config.API_URL}/api/flashcards`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                },
+                body: JSON.stringify({
+                    course_id: courseId,
+                    title: 'Flashcards gerados por IA', // Could prompt for title
+                    cards: aid.content,
+                }),
+            });
+
+            if (!response.ok) throw new Error('Failed to save flashcards');
+            alert('Flashcards salvos com sucesso!');
+        } catch (error) {
+            console.error('Error saving flashcards:', error);
+            alert('Erro ao salvar flashcards.');
+        }
+    };
+
     return (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="relative bg-gray-100 dark:bg-gray-800 p-6 rounded-2xl shadow-2xl w-full max-w-3xl animate-fade-in-up">
-                <button onClick={onClose} className="absolute top-4 right-4 p-2 rounded-full bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors z-10">
-                    <X className="w-5 h-5 text-gray-700 dark:text-gray-200" />
-                </button>
-                
+                <div className="absolute top-4 right-4 flex space-x-2 z-10">
+                    {aid.type === 'flashcards' && (
+                        <button
+                            onClick={handleSave}
+                            className="p-2 rounded-full bg-blue-100 dark:bg-blue-900/50 hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors text-blue-600 dark:text-blue-400"
+                            title="Salvar Flashcards"
+                        >
+                            <Save className="w-5 h-5" />
+                        </button>
+                    )}
+                    <button onClick={onClose} className="p-2 rounded-full bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">
+                        <X className="w-5 h-5 text-gray-700 dark:text-gray-200" />
+                    </button>
+                </div>
+
                 {aid.type === 'flashcards' && <FlashcardViewer flashcards={aid.content as Flashcard[]} />}
                 {aid.type === 'summary' && <SummaryViewer summary={aid.content as Summary} />}
 
             </div>
-             <style>{`
+            <style>{`
                 @keyframes fade-in-up {
                     from { opacity: 0; transform: translateY(20px) scale(0.95); }
                     to { opacity: 1; transform: translateY(0) scale(1); }

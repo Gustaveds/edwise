@@ -7,6 +7,7 @@ import VideoForm from './forms/VideoForm';
 import TextForm from './forms/TextForm';
 import QuizForm from './forms/QuizForm';
 import VideoUpload from './VideoUpload';
+import config from '../config';
 
 interface CourseEditorProps {
     course: Course | null;
@@ -39,7 +40,7 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
     const fetchCourseDetails = async () => {
         if (!course) return;
         try {
-            const res = await fetch(`http://localhost:3001/api/courses/${course.id}`, {
+            const res = await fetch(`${config.API_URL}/api/courses/${course.id}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             const data = await res.json();
@@ -58,8 +59,8 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
             // 1. Save Course
             const method = course ? 'PUT' : 'POST';
             const url = course
-                ? `http://localhost:3001/api/courses/${course.id}`
-                : 'http://localhost:3001/api/courses';
+                ? `${config.API_URL}/api/courses/${course.id}`
+                : config.API_URL + '/api/courses';
 
             const courseRes = await fetch(url, {
                 method,
@@ -76,7 +77,7 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
             // 2. Save Modules & Contents (Sequential for simplicity)
             for (const module of modules) {
                 // Create Module
-                const moduleRes = await fetch('http://localhost:3001/api/modules', {
+                const moduleRes = await fetch(config.API_URL + '/api/modules', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                     body: JSON.stringify({
@@ -91,7 +92,7 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
                 for (const content of module.contents) {
                     if (content.type === MaterialType.Quiz) {
                         // Special handling for Quiz
-                        await fetch('http://localhost:3001/api/quizzes', {
+                        await fetch(config.API_URL + '/api/quizzes', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                             body: JSON.stringify({
@@ -105,7 +106,7 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
                         // But my /api/quizzes creates a quiz linked to content.
 
                         // Step A: Create Content Record
-                        const contentRes = await fetch('http://localhost:3001/api/contents', {
+                        const contentRes = await fetch(config.API_URL + '/api/contents', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                             body: JSON.stringify({
@@ -120,7 +121,7 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
 
                         // Step B: If Quiz, save quiz details
                         if (content.type === MaterialType.Quiz && content.settings?.questions) {
-                            await fetch('http://localhost:3001/api/quizzes', {
+                            await fetch(config.API_URL + '/api/quizzes', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                                 body: JSON.stringify({
@@ -133,7 +134,7 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
                         }
                     } else {
                         // Standard Content (Video, Text)
-                        await fetch('http://localhost:3001/api/contents', {
+                        await fetch(config.API_URL + '/api/contents', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                             body: JSON.stringify({
@@ -223,7 +224,7 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
         try {
             // If it's a saved content (has ID and not temp), delete from backend
             if (content.id && !content.id.toString().startsWith('temp-')) {
-                const res = await fetch(`http://localhost:3001/api/contents/${content.id}`, {
+                const res = await fetch(`${config.API_URL}/api/contents/${content.id}`, {
                     method: 'DELETE',
                     headers: { Authorization: `Bearer ${token}` }
                 });
@@ -257,7 +258,7 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
         try {
             // If it's a saved module (has ID and not temp), delete from backend
             if (module.id && module.id > 0) {
-                const res = await fetch(`http://localhost:3001/api/modules/${module.id}`, {
+                const res = await fetch(`${config.API_URL}/api/modules/${module.id}`, {
                     method: 'DELETE',
                     headers: { Authorization: `Bearer ${token}` }
                 });
@@ -452,20 +453,16 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
                 onSelect={handleResourceSelect}
             />
 
-            {/* Video Upload Modal */}
+            {/* Video Upload Modal - No backdrop wrapper needed, MinimizableProcessingModal handles it */}
             {uploadModuleIndex !== null && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-lg w-full max-w-md">
-                        <VideoUpload
-                            moduleId={modules[uploadModuleIndex].id}
-                            onUploadComplete={() => {
-                                setUploadModuleIndex(null);
-                                fetchCourseDetails(); // Refresh to show new video
-                            }}
-                            onCancel={() => setUploadModuleIndex(null)}
-                        />
-                    </div>
-                </div>
+                <VideoUpload
+                    moduleId={modules[uploadModuleIndex].id}
+                    onUploadComplete={() => {
+                        setUploadModuleIndex(null);
+                        fetchCourseDetails(); // Refresh to show new video
+                    }}
+                    onCancel={() => setUploadModuleIndex(null)}
+                />
             )}
         </div>
     );

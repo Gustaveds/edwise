@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Sparkles, FileText, MessageSquare, Clock, AlertCircle, CheckCircle2, Loader } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import config from '../config';
 
 interface VideoAIData {
     id: number;
@@ -34,7 +35,7 @@ const VideoAIDisplay: React.FC<VideoAIDisplayProps> = ({ videoId, isOwner }) => 
 
         try {
             const token = localStorage.getItem('token');
-            const response = await axios.get(`http://localhost:3001/api/videos/${videoId}/ai-data`, {
+            const response = await axios.get(`${config.API_URL}/api/videos/${videoId}/ai-data`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setAiData(response.data);
@@ -52,13 +53,13 @@ const VideoAIDisplay: React.FC<VideoAIDisplayProps> = ({ videoId, isOwner }) => 
 
         try {
             const token = localStorage.getItem('token');
-            await axios.post(`http://localhost:3001/api/videos/${videoId}/process-ai`, {}, {
+            await axios.post(`${config.API_URL}/api/videos/${videoId}/process-ai`, {}, {
                 headers: { Authorization: `Bearer ${token}` }
             });
 
             // Poll for completion
             const pollInterval = setInterval(async () => {
-                const response = await axios.get(`http://localhost:3001/api/videos/${videoId}/ai-data`, {
+                const response = await axios.get(`${config.API_URL}/api/videos/${videoId}/ai-data`, {
                     headers: { Authorization: `Bearer ${token}` }
                 });
 
