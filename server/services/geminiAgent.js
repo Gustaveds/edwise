@@ -39,14 +39,24 @@ Quando colocar o link de videos, não use nenhum formato em volta do link, apena
  * @param {string} courseId - The course ID (for context)
  * @returns {Promise<string>} - The agent's response
  */
-async function generateResponse(userMessage, courseId) {
+import db from '../db.js';
+// ... imports
+
+/**
+ * Generate a response using Gemini 2.5 Pro with RAG context
+ * @param {string} userMessage - The user's question
+ * @param {string} courseId - The course ID (for context)
+ * @param {number} userId - The user ID (for logging)
+ * @returns {Promise<string>} - The agent's response
+ */
+async function generateResponse(userMessage, courseId, userId) {
     try {
         // 1. Get all videos for reference
         const videos = await getAllVideos();
         const videosContext = videos.map(v => `<video>\n  <title>${v.title}</title>\n  <video_id>${v.yt_id}</video_id>\n  <url>${v.url}</url>\n</video>`).join('\n');
 
         // 2. Search for relevant documents using RAG
-        const relevantDocs = await searchDocuments(userMessage, 25);
+        const relevantDocs = await searchDocuments(userMessage, 25, { course_id: Number(courseId) });
 
         // 3. Build context from relevant documents
         const contextParts = relevantDocs.map((doc, idx) => {
@@ -95,7 +105,17 @@ ${srtContext ? `# SRT dos Vídeos Mais Relevantes:\n${srtContext}` : ''}`;
 
         const result = await model.generateContent(userMessage);
         const response = result.response;
-        return response.text();
+        const responseText = response.text();
+
+        // 7. Log interaction
+        if (userId) {
+            await db.query(
+                'INSERT INTO ai_logs (user_id, course_id, message, response, metadata) VALUES ($1, $2, $3, $4, $5)',
+                [userId, courseId, userMessage, responseText, { model: 'gemini-2.0-flash-exp', context_docs: relevantDocs.length }]
+            );
+        }
+
+        return responseText;
 
     } catch (error) {
         console.error('Error generating response:', error);

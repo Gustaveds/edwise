@@ -26,7 +26,7 @@ services:
     volumes:
       - uploads:/app/uploads
     networks:
-      - edwise-network
+      - tpr_ia
 
   # Serviço de Transcrição Whisper (Separado)
   whisper-service:
@@ -46,7 +46,7 @@ services:
       - uploads:/app/uploads
       - whisper-cache:/root/.cache/whisper
     networks:
-      - edwise-network
+      - tpr_ia
     # Descomente para usar GPU
     # deploy:
     #   resources:
@@ -66,7 +66,7 @@ services:
     volumes:
       - redis-data:/data
     networks:
-      - edwise-network
+      - tpr_ia
     command: redis-server --appendonly yes
 
   # PostgreSQL
@@ -81,7 +81,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
-      - edwise-network
+      - tpr_ia
     ports:
       - "5432:5432"
 
@@ -96,7 +96,7 @@ services:
     volumes:
       - minio-data:/data
     networks:
-      - edwise-network
+      - tpr_ia
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -112,7 +112,7 @@ services:
     depends_on:
       - backend
     networks:
-      - edwise-network
+      - tpr_ia
     environment:
       - REACT_APP_API_URL=http://localhost:3001
 
@@ -131,7 +131,7 @@ services:
       - frontend
       - backend
     networks:
-      - edwise-network
+      - tpr_ia
 
 volumes:
   uploads:
@@ -142,5 +142,5 @@ volumes:
 
 
 networks:
-  edwise-network:
+  tpr_ia:
     driver: bridge

@@ -15,11 +15,8 @@ echo -e "${CYAN}  Iniciando Plataforma EdWise AI${NC}"
 echo -e "${CYAN}===========================================================${NC}"
 echo ""
 
-# Exportar variáveis de ambiente para o Redis local
-export REDIS_HOST=localhost
-export REDIS_PORT=6379
-export REDIS_PASSWORD=***REMOVED_REDIS_PASSWORD***
-export REDIS_DB=15
+# Redis configuration is loaded from .env file by the backend
+# No need to export here - the .env file has the correct values
 
 # Função para matar processos nas portas 3000 e 3001
 kill_existing_processes() {

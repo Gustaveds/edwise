@@ -10,14 +10,29 @@ if (process.env.NODE_ENV !== 'production') {
     dotenv.config({ path: resolve(__dirname, '../../.env') });
 }
 
+// Validar variáveis obrigatórias
+const requiredEnvVars = [
+    'MINIO_SERVER_URL',
+    'MINIO_ACCESS_KEY',
+    'MINIO_SECRET_KEY'
+];
+
+for (const varName of requiredEnvVars) {
+    if (!process.env[varName]) {
+        throw new Error(`❌ Variável de ambiente obrigatória não configurada: ${varName}`);
+    }
+}
+
 const s3Client = new S3Client({
     region: 'us-east-1', // MinIO requires a region, even if dummy
-    endpoint: process.env.MINIO_SERVER_URL || 'https://s3.tgbia.com',
+    endpoint: process.env.MINIO_SERVER_URL,
     credentials: {
-        accessKeyId: process.env.MINIO_ACCESS_KEY || '***REMOVED_MINIO_ACCESS_KEY***',
-        secretAccessKey: process.env.MINIO_SECRET_KEY || '***REMOVED_MINIO_SECRET_KEY***',
+        accessKeyId: process.env.MINIO_ACCESS_KEY,
+        secretAccessKey: process.env.MINIO_SECRET_KEY,
     },
     forcePathStyle: true, // Needed for MinIO
 });
+
+console.log('✓ MinIO S3 Client configurado:', process.env.MINIO_SERVER_URL);
 
 export default s3Client;

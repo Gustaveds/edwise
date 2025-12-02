@@ -1,27 +1,37 @@
 FROM node:18-slim
 
-# Instalar dependências do sistema (Python, FFmpeg, etc)
+# ========================================
+# LAYER 1: Dependências do Sistema
+# (Raramente muda - cache máximo)
+# ========================================
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
-# Copiar package.json
-COPY package*.json ./
-
-# Instalar dependências Node
-RUN npm install --production
-
-# Instalar Whisper
+# ========================================
+# LAYER 2: Whisper + Modelo
+# (Só refaz se mudar versão do Whisper)
+# ========================================
 RUN pip3 install --break-system-packages openai-whisper
 
-# Pre-download do modelo medium (cache)
+# Pre-download do modelo medium (~1.5GB, fica em cache)
 RUN python3 -c "import whisper; whisper.load_model('medium')"
 
-# Copiar código
+WORKDIR /app
+
+# ========================================
+# LAYER 3: Dependências Node
+# (Só refaz se package.json mudar)
+# ========================================
+COPY package*.json ./
+RUN npm install --production
+
+# ========================================
+# LAYER 4: Código da Aplicação
+# (Refaz sempre que código mudar)
+# ========================================
 COPY . .
 
 # Expor porta

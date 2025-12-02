@@ -4,6 +4,7 @@ import AnalyticsDashboard from './AnalyticsDashboard';
 import { Course } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { Plus, Edit, Trash2, Users, BarChart2 } from 'lucide-react';
+import config from '../config';
 
 const ProfessorDashboard: React.FC = () => {
     const { token } = useAuth();
@@ -18,7 +19,7 @@ const ProfessorDashboard: React.FC = () => {
 
     const fetchCourses = async () => {
         try {
-            const res = await fetch('http://localhost:3001/api/courses', {
+            const res = await fetch(config.API_URL + '/api/courses', {
                 headers: { Authorization: `Bearer ${token}` }
             });
             const data = await res.json();
@@ -41,7 +42,7 @@ const ProfessorDashboard: React.FC = () => {
     const handleDeleteCourse = async (courseId: string | number) => {
         if (!window.confirm('Tem certeza que deseja excluir este curso?')) return;
         try {
-            await fetch(`http://localhost:3001/api/courses/${courseId}`, {
+            await fetch(`${config.API_URL}/api/courses/${courseId}`, {
                 method: 'DELETE',
                 headers: { Authorization: `Bearer ${token}` }
             });
