@@ -8,6 +8,7 @@ import { Bot, User as UserIcon, Send, Loader2, ThumbsUp, ThumbsDown, MessageSqua
 import ReactMarkdown from 'react-markdown';
 import { useAnalytics } from '../contexts/AnalyticsContext';
 import QuizModal from './QuizModal';
+import LinkifiedText from './LinkifiedText';
 
 
 interface ChatAssistantProps {
@@ -31,12 +32,18 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course, videoId, external
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        // Usar timeout para garantir que o DOM foi atualizado
+        setTimeout(() => {
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
     };
 
     useEffect(() => {
-        scrollToBottom();
-    }, [messages]);
+        // Só fazer scroll se houver mais de 1 mensagem (não na welcome message)
+        if (messages.length > 1) {
+            scrollToBottom();
+        }
+    }, [messages.length]);
 
     // Sync messages with parent component
     useEffect(() => {
@@ -58,7 +65,7 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course, videoId, external
         if (messages.length === 0 && !externalMessages) {
             const welcomeMessage: ChatMessage = {
                 id: 'welcome',
-                text: `Olá! Eu sou seu assistente de IA para **"${course.title}"**. Faça uma pergunta ou use os comandos:\n\n• \`/quiz\` - Gerar um quiz \n • \`/flashcards\` - Gerar flashcards \n • \`/summary\` - Resumir a sessão`,
+                text: `Olá! Eu sou seu assistente de IA para "${course.title}".\n\nFaça uma pergunta ou use os comandos:\n\n• /quiz - Gerar um quiz\n• /flashcards - Gerar flashcards\n• /summary - Resumir a sessão`,
                 sender: 'ai',
             };
             setMessages([welcomeMessage]);
@@ -206,7 +213,7 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course, videoId, external
                 )}
 
                 {/* Chat messages - always visible */}
-                <div className="flex-1 p-4 overflow-y-auto space-y-4">
+                <div className="flex-1 p-4 pt-6 overflow-y-auto space-y-4">
                     {messages.map((msg) => (
                         <div
                             key={msg.id}
@@ -225,7 +232,13 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course, videoId, external
                                     } `}
                             >
                                 <div className="prose prose-sm dark:prose-invert max-w-none">
-                                    <ReactMarkdown>{msg.text}</ReactMarkdown>
+                                    <ReactMarkdown
+                                        components={{
+                                            p: ({ children }) => <LinkifiedText>{children}</LinkifiedText>
+                                        }}
+                                    >
+                                        {msg.text}
+                                    </ReactMarkdown>
                                 </div>
                             </div>
                             {msg.sender === 'ai' && (
@@ -295,10 +308,9 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course, videoId, external
                     )}
                     <div ref={messagesEndRef} />
                 </div>
-            </div>
 
-            {/* Input field - always visible */}
-            <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+                {/* Input field - always visible */}
+                <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
                 <div className="flex items-center relative">
                     <input
                         type="text"
@@ -322,6 +334,7 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ course, videoId, external
                         {error}
                     </p>
                 )}
+                </div>
             </div>
         </>
     );

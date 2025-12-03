@@ -5,13 +5,19 @@ import { processVideoWithAI } from './services/videoAI.js';
 
 console.log('👷 Video Worker starting...');
 
+// Helper function to check if video still exists
+async function videoExists(videoId) {
+    const result = await db.query('SELECT id FROM videos WHERE id = $1', [videoId]);
+    return result.rows.length > 0;
+}
+
 // Helper function to update video stage
 async function updateVideoStage(videoId, stage) {
     await db.query(
-        `UPDATE videos 
+        `UPDATE videos
          SET metadata = jsonb_set(
-             COALESCE(metadata, '{}'::jsonb), 
-             '{current_stage}', 
+             COALESCE(metadata, '{}'::jsonb),
+             '{current_stage}',
              to_jsonb($1::text)
          ),
          updated_at = NOW()

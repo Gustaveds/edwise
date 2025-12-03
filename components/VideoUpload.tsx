@@ -8,11 +8,12 @@ interface VideoUploadProps {
     moduleId: number;
     onUploadComplete: () => void;
     onCancel: () => void;
+    onVideoCreated?: (videoData: { id: number; title: string; status: string; video_id: number }) => void;
 }
 
 type UploadState = 'idle' | 'uploading' | 'processing' | 'error';
 
-const VideoUpload: React.FC<VideoUploadProps> = ({ moduleId, onUploadComplete, onCancel }) => {
+const VideoUpload: React.FC<VideoUploadProps> = ({ moduleId, onUploadComplete, onCancel, onVideoCreated }) => {
     const [file, setFile] = useState<File | null>(null);
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
@@ -63,6 +64,16 @@ const VideoUpload: React.FC<VideoUploadProps> = ({ moduleId, onUploadComplete, o
             setVideoId(response.data.video_id);
             setUploadState('processing');
             setUploadProgress(100);
+
+            // Notify parent that video was created (so it can be added to the list immediately)
+            if (onVideoCreated) {
+                onVideoCreated({
+                    id: response.data.content_id,
+                    title: title,
+                    status: 'processing',
+                    video_id: response.data.video_id
+                });
+            }
 
         } catch (err: any) {
             console.error(err);

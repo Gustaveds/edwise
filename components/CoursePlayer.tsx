@@ -400,6 +400,12 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                                 )}
                             </div>
                         )}
+                        {activeTab === 'aidata' && activeContent?.video_id && (
+                            <VideoAIDisplay
+                                videoId={activeContent.video_id}
+                                isOwner={isProfessor}
+                            />
+                        )}
                     </div>
                 </div>
             </div>

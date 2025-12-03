@@ -53,7 +53,13 @@ async function generateResponse(userMessage, courseId, userId) {
     try {
         // 1. Get all videos for reference
         const videos = await getAllVideos();
-        const videosContext = videos.map(v => `<video>\n  <title>${v.title}</title>\n  <video_id>${v.yt_id}</video_id>\n  <url>${v.url}</url>\n</video>`).join('\n');
+        const videosContext = videos.map(v => {
+            // Construct MinIO URL following the pattern from videoAI.js:301-303
+            const videoUrl = v.s3_key
+                ? `${process.env.MINIO_SERVER_URL}/${process.env.MINIO_BUCKET}/${v.s3_key}`
+                : '';
+            return `<video>\n  <title>${v.title}</title>\n  <video_id>${v.id}</video_id>\n  <url>${videoUrl}</url>\n</video>`;
+        }).join('\n');
 
         // 2. Search for relevant documents using RAG
         const relevantDocs = await searchDocuments(userMessage, 25, { course_id: Number(courseId) });

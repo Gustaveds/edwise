@@ -5,6 +5,7 @@ import config from '../config';
 
 interface ProcessingStatus {
     status: 'processing' | 'ready' | 'error';
+    processingState?: 'queued' | 'processing' | 'completed' | 'error';
     current_stage?: string;
     processingTimeSeconds: number;
     error?: string;
@@ -57,7 +58,12 @@ const MinimizableProcessingModal: React.FC<MinimizableProcessingModalProps> = ({
         return () => clearInterval(interval);
     }, [videoId, isMinimized]);
 
-    const getStageDisplay = (stage?: string) => {
+    const getStageDisplay = (stage?: string, isQueued?: boolean) => {
+        // Show queue state with priority
+        if (isQueued) {
+            return { label: 'Aguardando na fila...', icon: '⏳' };
+        }
+
         const stages: Record<string, { label: string; icon: string }> = {
             initializing: { label: 'Inicializando...', icon: '🔄' },
             downloading: { label: 'Baixando vídeo...', icon: '📥' },
@@ -75,14 +81,15 @@ const MinimizableProcessingModal: React.FC<MinimizableProcessingModalProps> = ({
     const duration = processingStatus?.processingTimeSeconds || 0;
     const minutes = Math.floor(duration / 60);
     const seconds = duration % 60;
-    const stageInfo = getStageDisplay(processingStatus?.current_stage);
+    const isQueued = processingStatus?.processingState === 'queued';
+    const stageInfo = getStageDisplay(processingStatus?.current_stage, isQueued);
 
     // Minimized view (Bottom-right corner) - NO BACKDROP
     if (isMinimized) {
         return (
             <div className="fixed bottom-4 right-4 bg-white rounded-lg shadow-2xl border border-gray-300 w-80 z-50 transition-all duration-300">
                 <div className="p-3 flex items-center gap-3 cursor-pointer" onClick={() => setIsMinimized(false)}>
-                    <Loader2 className="w-5 h-5 text-blue-600 animate-spin flex-shrink-0" />
+                    <Loader2 className={`w-5 h-5 flex-shrink-0 ${isQueued ? 'text-yellow-600' : 'text-blue-600'} animate-spin`} />
                     <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900 truncate">{videoTitle}</p>
                         <p className="text-xs text-gray-600 truncate">{stageInfo.label}</p>
@@ -180,26 +187,45 @@ const MinimizableProcessingModal: React.FC<MinimizableProcessingModalProps> = ({
                         // Processing view
                         <>
                             {/* Current Stage */}
-                            <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-md">
-                                <span className="text-3xl">{stageInfo.icon}</span>
-                                <div className="flex-1">
-                                    <p className="text-sm font-medium text-gray-800">{stageInfo.label}</p>
-                                    <p className="text-xs text-gray-600">
-                                        Tempo decorrido: {minutes}m {seconds}s
-                                    </p>
+                            {isQueued ? (
+                                // Queue waiting view
+                                <div className="flex items-center gap-3 p-4 bg-yellow-50 rounded-md border border-yellow-200">
+                                    <span className="text-3xl">{stageInfo.icon}</span>
+                                    <div className="flex-1">
+                                        <p className="text-sm font-medium text-gray-800">
+                                            Aguardando processamento
+                                        </p>
+                                        <p className="text-xs text-gray-600">
+                                            Seu vídeo está na fila e será processado em breve
+                                        </p>
+                                    </div>
                                 </div>
-                            </div>
+                            ) : (
+                                // Normal processing view
+                                <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-md">
+                                    <span className="text-3xl">{stageInfo.icon}</span>
+                                    <div className="flex-1">
+                                        <p className="text-sm font-medium text-gray-800">{stageInfo.label}</p>
+                                        <p className="text-xs text-gray-600">
+                                            Tempo decorrido: {minutes}m {seconds}s
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Progress Bar */}
                             <div className="space-y-2">
                                 <div className="w-full bg-gray-200 rounded-full h-2">
                                     <div
-                                        className="bg-blue-600 h-2 rounded-full transition-all duration-500 animate-pulse"
+                                        className={`h-2 rounded-full transition-all duration-500 ${isQueued ? 'bg-yellow-500' : 'bg-blue-600'} animate-pulse`}
                                         style={{ width: '100%' }}
                                     />
                                 </div>
                                 <p className="text-xs text-center text-gray-500">
-                                    Aguarde enquanto seu vídeo está sendo processado...
+                                    {isQueued
+                                        ? 'Aguardando na fila de processamento...'
+                                        : 'Aguarde enquanto seu vídeo está sendo processado...'
+                                    }
                                 </p>
                             </div>
 
