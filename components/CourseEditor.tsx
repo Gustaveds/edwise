@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Course, MaterialType, Module, Material } from '../types';
 import { useAuth } from '../contexts/AuthContext';
-import { Save, X, Plus, Trash2, Folder, FileText, Video, GripVertical, ClipboardList, Upload, Link as LinkIcon, File } from 'lucide-react';
+import { Save, Plus, Trash2, Folder, FileText, Video, GripVertical, ClipboardList, Upload, Link as LinkIcon, File, Loader2 } from 'lucide-react';
 import ResourcePicker from './ResourcePicker';
 import VideoForm from './forms/VideoForm';
 import TextForm from './forms/TextForm';
@@ -20,6 +20,9 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
     const [title, setTitle] = useState(course?.title || '');
     const [description, setDescription] = useState(course?.description || '');
     const [modules, setModules] = useState<Module[]>([]);
+    const [currentCourseId, setCurrentCourseId] = useState<string | number | null>(
+        course?.id ? (typeof course.id === 'string' ? parseInt(course.id) : course.id) : null
+    );
 
     // UI State
     const [pickerOpen, setPickerOpen] = useState(false);
@@ -56,10 +59,12 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
 
     const handleSaveCourse = async () => {
         try {
-            // 1. Save Course
-            const method = course ? 'PUT' : 'POST';
-            const url = course
-                ? `${config.API_URL}/api/courses/${course.id}`
+            // Since content is auto-saved, we only need to update course metadata and module titles
+
+            // 1. Save/Update Course metadata (title and description)
+            const method = currentCourseId ? 'PUT' : 'POST';
+            const url = currentCourseId
+                ? `${config.API_URL}/api/courses/${currentCourseId}`
                 : config.API_URL + '/api/courses';
 
             const courseRes = await fetch(url, {
@@ -72,80 +77,25 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
             });
 
             if (!courseRes.ok) throw new Error('Failed to save course');
-            const savedCourse = await courseRes.json();
 
-            // 2. Save Modules & Contents (Sequential for simplicity)
+            // If it's a new course, store the ID
+            if (!currentCourseId) {
+                const savedCourse = await courseRes.json();
+                setCurrentCourseId(savedCourse.id);
+            }
+
+            // 2. Update module titles if they were changed
             for (const module of modules) {
-                // Create Module
-                const moduleRes = await fetch(config.API_URL + '/api/modules', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                    body: JSON.stringify({
-                        course_id: savedCourse.id,
-                        title: module.title,
-                        type: 'section'
-                    })
-                });
-                const savedModule = await moduleRes.json();
-
-                // Create Contents
-                for (const content of module.contents) {
-                    if (content.type === MaterialType.Quiz) {
-                        // Special handling for Quiz
-                        await fetch(config.API_URL + '/api/quizzes', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                            body: JSON.stringify({
-                                content_id: null, // This endpoint creates both content and quiz in transaction if we updated it, but currently it expects content_id. 
-                                // WAIT: My backend implementation for /api/quizzes inserts into quizzes table. It needs a content_id.
-                                // So I must create content first.
-                                // Let's simplify: Create content first for ALL types.
-                            })
-                        });
-                        // Actually, let's stick to the plan: Save Content -> Then Save Specifics.
-                        // But my /api/quizzes creates a quiz linked to content.
-
-                        // Step A: Create Content Record
-                        const contentRes = await fetch(config.API_URL + '/api/contents', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                            body: JSON.stringify({
-                                module_id: savedModule.id,
-                                title: content.title,
-                                type: content.type,
-                                data: content.content, // For video/text this is the content. For quiz, it might be placeholder.
-                                description: content.description
-                            })
-                        });
-                        const savedContent = await contentRes.json();
-
-                        // Step B: If Quiz, save quiz details
-                        if (content.type === MaterialType.Quiz && content.settings?.questions) {
-                            await fetch(config.API_URL + '/api/quizzes', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                                body: JSON.stringify({
-                                    content_id: savedContent.id,
-                                    title: content.title,
-                                    passing_score: content.settings.passing_score,
-                                    questions: content.settings.questions
-                                })
-                            });
-                        }
-                    } else {
-                        // Standard Content (Video, Text)
-                        await fetch(config.API_URL + '/api/contents', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                            body: JSON.stringify({
-                                module_id: savedModule.id,
-                                title: content.title,
-                                type: content.type,
-                                data: content.content,
-                                description: content.description
-                            })
-                        });
-                    }
+                if (module.id > 0) {
+                    // Update existing module
+                    await fetch(`${config.API_URL}/api/modules/${module.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                        body: JSON.stringify({
+                            title: module.title,
+                            type: 'section'
+                        })
+                    });
                 }
             }
 
@@ -165,53 +115,149 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
         setPickerOpen(true);
     };
 
-    const handleResourceSelect = (type: MaterialType) => {
+    const handleResourceSelect = async (type: MaterialType) => {
         if (activeModuleIndex === null) return;
 
-        // Special handling for Video Upload
-        if (type === MaterialType.Video) {
-            const module = modules[activeModuleIndex];
+        try {
+            // Ensure course is saved (check if we already have a course ID stored)
+            let courseId = currentCourseId;
+            if (!courseId) {
+                if (!title.trim()) {
+                    alert("Por favor, dê um título ao curso antes de adicionar conteúdo.");
+                    return;
+                }
+
+                const courseRes = await fetch(config.API_URL + '/api/courses', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ title, description, organization_type: 'modules' })
+                });
+
+                if (!courseRes.ok) throw new Error('Failed to save course');
+                const savedCourse = await courseRes.json();
+                courseId = savedCourse.id;
+                setCurrentCourseId(courseId); // Store course ID to prevent duplicates
+            }
+
+            // Ensure module is saved
+            let module = modules[activeModuleIndex];
             if (module.id < 0) {
-                alert("Por favor, salve o curso para criar o módulo antes de fazer upload de vídeos.");
+                const moduleRes = await fetch(config.API_URL + '/api/modules', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                    body: JSON.stringify({
+                        course_id: courseId,
+                        title: module.title,
+                        type: 'section'
+                    })
+                });
+
+                if (!moduleRes.ok) throw new Error('Failed to save module');
+                const savedModule = await moduleRes.json();
+
+                // Update module ID in state
+                const newModules = [...modules];
+                newModules[activeModuleIndex].id = savedModule.id;
+                setModules(newModules);
+                module = newModules[activeModuleIndex];
+            }
+
+            // Special handling for Video Upload
+            if (type === MaterialType.Video) {
+                setUploadModuleIndex(activeModuleIndex);
+                setPickerOpen(false);
                 return;
             }
-            setUploadModuleIndex(activeModuleIndex);
+
+            // Create content immediately in the database
+            const contentRes = await fetch(config.API_URL + '/api/contents', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({
+                    module_id: module.id,
+                    title: `Novo ${type}`,
+                    type: type,
+                    data: '',
+                    description: ''
+                })
+            });
+
+            if (!contentRes.ok) throw new Error('Failed to create content');
+            const savedContent = await contentRes.json();
+
+            // Add to local state with real ID
+            const newModules = [...modules];
+            const newContent: Material = {
+                id: savedContent.id,
+                title: `Novo ${type}`,
+                type: type,
+                content: '',
+                description: '',
+                settings: {}
+            };
+
+            newModules[activeModuleIndex].contents.push(newContent);
+            setModules(newModules);
+            setEditingContent({ mIndex: activeModuleIndex, cIndex: newModules[activeModuleIndex].contents.length - 1 });
             setPickerOpen(false);
-            return;
+        } catch (err) {
+            console.error(err);
+            alert('Erro ao criar conteúdo. Por favor, tente novamente.');
         }
-
-        const newModules = [...modules];
-        const newContent: Material = {
-            id: `temp-${Date.now()}`,
-            title: `Novo ${type}`,
-            type: type,
-            content: '',
-            description: '',
-            settings: {}
-        };
-
-        newModules[activeModuleIndex].contents.push(newContent);
-        setModules(newModules);
-        setEditingContent({ mIndex: activeModuleIndex, cIndex: newModules[activeModuleIndex].contents.length - 1 });
-        setPickerOpen(false);
     };
 
-    const updateContent = (data: any) => {
+    const updateContent = async (data: any) => {
         if (!editingContent) return;
         const { mIndex, cIndex } = editingContent;
         const newModules = [...modules];
 
-        // Merge updates
-        newModules[mIndex].contents[cIndex] = {
+        // Merge updates locally first
+        const updatedContent = {
             ...newModules[mIndex].contents[cIndex],
             ...data,
             // If it's a quiz, store questions in settings for later save
             settings: data.type === MaterialType.Quiz ? { passing_score: data.passing_score, questions: data.questions } : {}
         };
 
+        newModules[mIndex].contents[cIndex] = updatedContent;
         setModules(newModules);
-        // Don't close editing, allows user to keep refining
-        // setEditingContent(null); 
+
+        // Auto-save to backend
+        try {
+            const contentId = updatedContent.id;
+
+            // Update content in database
+            await fetch(`${config.API_URL}/api/contents/${contentId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({
+                    title: data.title,
+                    type: data.type,
+                    data: data.content,
+                    description: data.description
+                })
+            });
+
+            // If it's a quiz, also update quiz data
+            if (data.type === MaterialType.Quiz && data.questions) {
+                await fetch(config.API_URL + '/api/quizzes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                    body: JSON.stringify({
+                        content_id: contentId,
+                        title: data.title,
+                        passing_score: data.passing_score,
+                        questions: data.questions
+                    })
+                });
+            }
+        } catch (err) {
+            console.error('Erro ao salvar alterações:', err);
+            // Optionally show a small notification instead of alert
+        }
     };
 
     const handleDeleteContent = async (mIndex: number, cIndex: number, e: React.MouseEvent) => {
@@ -414,15 +460,21 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
                                             <div
                                                 key={content.id}
                                                 onClick={() => setEditingContent({ mIndex, cIndex })}
-                                                className={`flex items-center p-2 rounded cursor-pointer ${editingContent?.mIndex === mIndex && editingContent?.cIndex === cIndex ? 'bg-blue-50 dark:bg-blue-900/30 ring-1 ring-blue-500' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
+                                                className={`group flex items-center p-2 rounded cursor-pointer ${editingContent?.mIndex === mIndex && editingContent?.cIndex === cIndex ? 'bg-blue-50 dark:bg-blue-900/30 ring-1 ring-blue-500' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
                                             >
                                                 <div className="mr-3">
                                                     {renderContentIcon(content.type)}
                                                 </div>
                                                 <span className="text-sm flex-1 truncate">{content.title}</span>
+                                                {content.settings?.status === 'processing' && (
+                                                    <div className="flex items-center gap-1 mr-2">
+                                                        <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
+                                                        <span className="text-xs text-blue-600">Processando</span>
+                                                    </div>
+                                                )}
                                                 <button
                                                     onClick={(e) => handleDeleteContent(mIndex, cIndex, e)}
-                                                    className="p-1 hover:bg-red-100 rounded text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                    className="p-1 hover:bg-red-100 dark:hover:bg-red-900/20 rounded text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
                                                     title="Excluir Conteúdo"
                                                 >
                                                     <Trash2 className="w-3 h-3" />
@@ -462,6 +514,21 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
                         fetchCourseDetails(); // Refresh to show new video
                     }}
                     onCancel={() => setUploadModuleIndex(null)}
+                    onVideoCreated={(videoData) => {
+                        // Add video to the module immediately with processing status
+                        const newModules = [...modules];
+                        const newContent: any = {
+                            id: videoData.id.toString(),
+                            title: videoData.title,
+                            type: MaterialType.Video,
+                            content: '',
+                            description: '',
+                            video_id: videoData.video_id,
+                            settings: { status: videoData.status }
+                        };
+                        newModules[uploadModuleIndex].contents.push(newContent);
+                        setModules(newModules);
+                    }}
                 />
             )}
         </div>

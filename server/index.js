@@ -24,6 +24,18 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 app.use(cors());
 app.use(express.json());
 
+// Helper function to sanitize titles
+function sanitizeTitle(title) {
+    if (!title) return title;
+    // Remove or replace problematic characters, keep basic punctuation
+    return title
+        .replace(/[<>]/g, '') // Remove < >
+        .replace(/[{}[\]]/g, '') // Remove brackets
+        .replace(/\\/g, '') // Remove backslashes
+        .replace(/\|/g, '-') // Replace pipes with dashes
+        .trim();
+}
+
 // Middleware to authenticate token
 function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
@@ -217,19 +229,38 @@ app.get('/api/courses/:id', authenticateToken, async (req, res) => {
         if (course.rows.length === 0) return res.status(404).json({ error: 'Course not found' });
 
         // Fetch modules and contents
-        const modules = await db.query('SELECT * FROM modules WHERE course_id = $1 ORDER BY order_index', [courseId]);
+        const modules = await db.query('SELECT DISTINCT * FROM modules WHERE course_id = $1 ORDER BY order_index', [courseId]);
         const contents = await db.query(`
-            SELECT c.*, v.id as video_id
+            SELECT DISTINCT ON (c.id)
+                c.id, c.module_id, c.title, c.type, c.description, c.data,
+                c.order_index, c.is_published, c.created_at, c.settings,
+                v.id as video_id, v.status as video_status
             FROM contents c
             LEFT JOIN videos v ON c.id = v.content_id
             JOIN modules m ON c.module_id = m.id
             WHERE m.course_id = $1
-            ORDER BY c.order_index
+            ORDER BY c.id, c.order_index
         `, [courseId]);
 
-        // Organize into tree structure
-        const modulesMap = modules.rows.map(m => ({ ...m, contents: [], subModules: [] }));
-        const contentMap = contents.rows;
+        // Organize into tree structure - garantir unicidade
+        const modulesMap = Array.from(
+            new Map(modules.rows.map(m => [m.id, { ...m, contents: [], subModules: [] }])).values()
+        );
+
+        // Garantir unicidade dos contents também e incluir status de processamento
+        const contentMap = Array.from(
+            new Map(contents.rows.map(c => {
+                // Add video_status to settings if it's a video
+                const contentWithStatus = { ...c };
+                if (c.video_id && c.video_status) {
+                    contentWithStatus.settings = {
+                        ...(c.settings || {}),
+                        status: c.video_status
+                    };
+                }
+                return [c.id, contentWithStatus];
+            })).values()
+        );
 
         // Attach contents to modules
         contentMap.forEach(c => {
@@ -266,6 +297,25 @@ app.post('/api/modules', authenticateToken, async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to create module' });
+    }
+});
+
+app.put('/api/modules/:id', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+    const moduleId = req.params.id;
+    const { title, type } = req.body;
+    try {
+        const result = await db.query(
+            'UPDATE modules SET title = $1, type = $2 WHERE id = $3 RETURNING *',
+            [title, type, moduleId]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Module not found' });
+        }
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update module' });
     }
 });
 
@@ -334,6 +384,25 @@ app.post('/api/contents', authenticateToken, async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to create content' });
+    }
+});
+
+app.put('/api/contents/:id', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+    const contentId = req.params.id;
+    const { title, type, data, description, settings, is_published, release_at, release_after_days } = req.body;
+    try {
+        const result = await db.query(
+            'UPDATE contents SET title = $1, type = $2, data = $3, description = $4, settings = $5, is_published = $6, release_at = $7, release_after_days = $8 WHERE id = $9 RETURNING *',
+            [title, type, data, description, settings || {}, is_published, release_at, release_after_days, contentId]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Content not found' });
+        }
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update content' });
     }
 });
 
@@ -629,7 +698,10 @@ app.post('/api/upload/video', authenticateToken, upload.single('video'), async (
     if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
 
     const file = req.file;
-    const { title, description, module_id } = req.body;
+    let { title, description, module_id } = req.body;
+
+    // Sanitize title
+    title = sanitizeTitle(title);
 
     if (!file) {
         return res.status(400).json({ error: 'No video file provided' });
@@ -781,19 +853,42 @@ app.get('/api/videos/:id/processing-status', authenticateToken, async (req, res)
         const video = result.rows[0];
         const metadata = video.metadata || {};
 
-        // Calculate processing time
-        const createdAt = new Date(video.created_at);
-        const updatedAt = new Date(video.updated_at);
-        const now = new Date();
+        // Calculate processing time using processing_started timestamp from metadata
+        // Only count time from when worker actually started, not from video creation
+        const hasStarted = !!metadata.processing_started;
+        const processingStarted = hasStarted
+            ? new Date(metadata.processing_started)
+            : null;
 
-        const processingTimeSeconds = video.status === 'processing'
-            ? Math.floor((now - createdAt) / 1000)
-            : Math.floor((updatedAt - createdAt) / 1000);
+        let processingTimeSeconds = 0;
+        let processingState = 'unknown';
+
+        if (video.status === 'error') {
+            processingState = 'error';
+            if (processingStarted) {
+                processingTimeSeconds = Math.floor((new Date(video.updated_at) - processingStarted) / 1000);
+            }
+        } else if (video.status === 'ready') {
+            processingState = 'completed';
+            if (processingStarted) {
+                processingTimeSeconds = Math.floor((new Date(video.updated_at) - processingStarted) / 1000);
+            }
+        } else if (video.status === 'processing') {
+            if (processingStarted) {
+                processingState = 'processing';
+                processingTimeSeconds = Math.floor((new Date() - processingStarted) / 1000);
+            } else {
+                processingState = 'queued';
+                processingTimeSeconds = 0; // Show 0 while waiting in queue
+            }
+        }
 
         res.json({
             id: video.id,
             title: video.title,
             status: video.status, // 'processing', 'ready', 'error'
+            processingState, // 'queued', 'processing', 'completed', 'error'
+            current_stage: metadata.current_stage,
             processingStarted: metadata.processing_started,
             error: metadata.error,
             faqCount: metadata.faq?.length || 0,
@@ -955,42 +1050,61 @@ app.delete('/api/contents/:id', authenticateToken, async (req, res) => {
         if (content.type === 'VIDEO' || content.type === 'video') {
             const videoRes = await db.query('SELECT id FROM videos WHERE content_id = $1', [contentId]);
             if (videoRes.rows.length > 0) {
-                // Call the video deletion logic (we can refactor to a function, but for now let's just use the existing route logic or duplicate it safely)
-                // Better: Redirect the request internally or just copy the logic. 
-                // Let's copy the logic to be safe and robust here.
-
                 const videoId = videoRes.rows[0].id;
 
-                await db.query('BEGIN');
+                try {
+                    await db.query('BEGIN');
 
-                // Get video details for cleanup
-                const videoData = await db.query('SELECT * FROM videos WHERE id = $1', [videoId]);
-                const video = videoData.rows[0];
+                    // Get video details for cleanup
+                    const videoData = await db.query('SELECT * FROM videos WHERE id = $1', [videoId]);
+                    const video = videoData.rows[0];
 
-                // 1. Delete AI embeddings
-                await db.query("DELETE FROM documents WHERE metadata->>'video_id' = $1", [videoId.toString()]);
-
-                // 2. Delete video segments
-                await db.query('DELETE FROM video_segments WHERE video_id = $1', [videoId]);
-
-                // 3. Delete video record
-                await db.query('DELETE FROM videos WHERE id = $1', [videoId]);
-
-                // 4. Delete content record
-                await db.query('DELETE FROM contents WHERE id = $1', [contentId]);
-
-                // 5. Delete from S3
-                if (video.s3_key) {
+                    // Cancel processing job if it exists
                     try {
-                        await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: video.s3_key }));
-                        console.log(`✓ Deleted S3 file: ${video.s3_key}`);
-                    } catch (s3Err) {
-                        console.error(`⚠ Failed to delete S3 file: ${video.s3_key}`, s3Err);
+                        const jobs = await videoQueue.getJobs(['waiting', 'active', 'delayed']);
+                        const videoJob = jobs.find(job => job.data.videoId === videoId);
+                        if (videoJob) {
+                            await videoJob.remove();
+                            console.log(`✓ Cancelled processing job for video ${videoId}`);
+                        }
+                    } catch (queueErr) {
+                        console.error(`⚠ Failed to cancel job for video ${videoId}:`, queueErr.message);
                     }
-                }
 
-                await db.query('COMMIT');
-                return res.json({ success: true, message: 'Video content deleted successfully' });
+                    // 1. Delete AI embeddings
+                    await db.query("DELETE FROM documents WHERE metadata->>'video_id' = $1", [videoId.toString()]);
+                    console.log(`✓ Deleted AI embeddings for video ${videoId}`);
+
+                    // 2. Delete video segments
+                    await db.query('DELETE FROM video_segments WHERE video_id = $1', [videoId]);
+                    console.log(`✓ Deleted video segments for video ${videoId}`);
+
+                    // 3. Delete video record
+                    await db.query('DELETE FROM videos WHERE id = $1', [videoId]);
+                    console.log(`✓ Deleted video record ${videoId}`);
+
+                    // 4. Delete content record
+                    await db.query('DELETE FROM contents WHERE id = $1', [contentId]);
+                    console.log(`✓ Deleted content record ${contentId}`);
+
+                    // 5. Delete from S3
+                    if (video.s3_key) {
+                        try {
+                            await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: video.s3_key }));
+                            console.log(`✓ Deleted S3 file: ${video.s3_key}`);
+                        } catch (s3Err) {
+                            console.error(`⚠ Failed to delete S3 file: ${video.s3_key}`, s3Err);
+                        }
+                    }
+
+                    await db.query('COMMIT');
+                    return res.json({ success: true, message: 'Video content deleted successfully' });
+
+                } catch (deleteErr) {
+                    await db.query('ROLLBACK');
+                    console.error('Error deleting video content:', deleteErr);
+                    throw deleteErr;
+                }
             }
         }
 
@@ -1096,7 +1210,7 @@ app.put('/api/videos/:id', authenticateToken, async (req, res) => {
 
             if (title) {
                 updates.push(`title = $${paramCount}`);
-                params.push(title);
+                params.push(sanitizeTitle(title));
                 paramCount++;
             }
 
@@ -1276,7 +1390,7 @@ app.put('/api/videos/:id', authenticateToken, async (req, res) => {
 
             if (title) {
                 updates.push(`title = $${paramCount}`);
-                params.push(title);
+                params.push(sanitizeTitle(title));
                 paramCount++;
             }
 

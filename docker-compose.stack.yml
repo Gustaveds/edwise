@@ -1,10 +1,28 @@
 version: '3.8'
 
 services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ***REMOVED_REDIS_PASSWORD***
+    networks:
+      - tpr_ia
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+    volumes:
+      - redis_data:/data
+
   backend:
     # ✅ CORRETO: Tag separada por ":" 
-    image: thiagouni/edwise-backend:${IMAGE_TAG:-v1.0.1}
+    image: thiagouni/edwise-backend:${IMAGE_TAG:-v1.0.6}
     environment:
+      - VITE_API_URL=https://apiedwise.tgbia.com
       - NODE_ENV=production
       - PORT=3010
 
@@ -65,11 +83,53 @@ services:
 
         - "traefik.http.routers.edwise-api.middlewares=edwise_cors,edwise_backend_headers,edwise_backend_compress"
 
-  frontend:
-    # ✅ CORRETO: thiagouni/edwise-frontend (não thiagouni/edwise)
-    image: thiagouni/edwise-frontend:${IMAGE_TAG:-v1.0.1}
+  worker:
+    # Use the same backend image but run worker.js instead
+    image: thiagouni/edwise-backend:${IMAGE_TAG:-v1.0.6}
+    command: node worker.js
+    environment:
+      # Same environment variables as backend
+      - NODE_ENV=production
+
+      # PostgreSQL
+      - DB_HOST=***REMOVED_DB_HOST***
+      - DB_USER=postgres
+      - DB_PASSWORD=***REMOVED_DB_PASSWORD***
+      - DB_DATABASE=EdWise
+      - DB_PORT=5432
+
+      # Auth
+      - JWT_SECRET=***REMOVED_JWT_SECRET***
+      - GEMINI_API_KEY=***REMOVED_GEMINI_API_KEY***
+
+      # Redis - Critical for queue processing
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=***REMOVED_REDIS_PASSWORD***
+      - REDIS_DB=15
+
+      # MinIO/S3 - Needed to download videos for processing
+      - MINIO_SERVER_URL=https://s3.tgbia.com
+      - MINIO_ACCESS_KEY=***REMOVED_MINIO_ACCESS_KEY***
+      - MINIO_SECRET_KEY=***REMOVED_MINIO_SECRET_KEY***
+      - MINIO_BUCKET=edwise
+
     networks:
       - tpr_ia
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+
+  frontend:
+    # ✅ CORRETO: thiagouni/edwise-frontend (não thiagouni/edwise)
+    image: thiagouni/edwise-frontend:${IMAGE_TAG:-v1.0.6}
+    networks:
+      - tpr_ia
+    environment:
+      - VITE_API_URL=https://apiedwise.tgbia.com
     deploy:
       replicas: 1
       update_config:
