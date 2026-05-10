@@ -69,9 +69,9 @@ for port in 3000 3001; do
     fi
 done
 
-# ─── 3. Sobe Postgres ───────────────────────────────────────
-echo -e "${YELLOW}[2/6] Subindo Postgres em docker...${NC}"
-$DC -f "$ROOT_DIR/docker-compose.dev.yml" up -d db
+# ─── 3. Sobe Postgres + MinIO ───────────────────────────────
+echo -e "${YELLOW}[2/6] Subindo Postgres e MinIO em docker...${NC}"
+$DC -f "$ROOT_DIR/docker-compose.dev.yml" up -d db minio minio-init
 
 echo -e "${YELLOW}  aguardando Postgres ficar pronto...${NC}"
 for i in $(seq 1 30); do
@@ -83,6 +83,20 @@ for i in $(seq 1 30); do
     if [ "$i" = "30" ]; then
         echo -e "${RED}  ❌ Postgres não respondeu em 30s${NC}"
         $DC -f "$ROOT_DIR/docker-compose.dev.yml" logs db | tail -30
+        exit 1
+    fi
+done
+
+echo -e "${YELLOW}  aguardando MinIO ficar pronto...${NC}"
+for i in $(seq 1 30); do
+    if curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+        echo -e "${GREEN}  ✓ MinIO pronto (console: http://localhost:9001)${NC}"
+        break
+    fi
+    sleep 1
+    if [ "$i" = "30" ]; then
+        echo -e "${RED}  ❌ MinIO não respondeu em 30s${NC}"
+        $DC -f "$ROOT_DIR/docker-compose.dev.yml" logs minio | tail -30
         exit 1
     fi
 done
