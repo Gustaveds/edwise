@@ -1,30 +1,33 @@
 import db from './db.js';
 import bcrypt from 'bcrypt';
 
+const SEEDS = [
+    { name: 'Admin User',     email: 'admin@edwise.ai',     role: 'admin',     password: 'admin123' },
+    { name: 'Professor Test', email: 'professor@edwise.ai', role: 'professor', password: '123456' },
+    { name: 'Student Test',   email: 'student@edwise.ai',   role: 'student',   password: '123456' },
+];
+
 async function createTestUsers() {
     try {
-        const passwordHash = await bcrypt.hash('123456', 10);
+        for (const { name, email, role, password } of SEEDS) {
+            const passwordHash = await bcrypt.hash(password, 10);
+            const result = await db.query(
+                `INSERT INTO users (name, email, password_hash, role)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (email) DO NOTHING
+                 RETURNING id`,
+                [name, email, passwordHash, role]
+            );
 
-        // Create Professor
-        const prof = await db.query(
-            'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id',
-            ['Professor Test', 'professor@edwise.ai', passwordHash, 'professor']
-        );
-        console.log(`✅ Created Professor: professor@edwise.ai / 123456 (ID: ${prof.rows[0].id})`);
-
-        // Create Student
-        const student = await db.query(
-            'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id',
-            ['Student Test', 'student@edwise.ai', passwordHash, 'student']
-        );
-        console.log(`✅ Created Student: student@edwise.ai / 123456 (ID: ${student.rows[0].id})`);
-
-    } catch (err) {
-        if (err.code === '23505') {
-            console.log('⚠️ Users already exist.');
-        } else {
-            console.error('❌ Error creating users:', err);
+            if (result.rows.length > 0) {
+                console.log(`✅ Created ${role}: ${email} / ${password} (ID: ${result.rows[0].id})`);
+            } else {
+                console.log(`✓ ${role} ${email} already exists — skipping`);
+            }
         }
+    } catch (err) {
+        console.error('❌ Error creating test users:', err);
+        process.exitCode = 1;
     } finally {
         process.exit();
     }
