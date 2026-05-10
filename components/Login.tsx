@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { BookOpen, Mail, Lock } from 'lucide-react';
+import { Mail, Lock, Sparkles, Loader2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-
 import config from '../config';
 
 interface LoginProps {
@@ -20,18 +19,15 @@ const Login: React.FC<LoginProps> = ({ onLogin, onForgotPasswordClick }) => {
         e.preventDefault();
         setIsLoading(true);
         setError('');
-
         try {
             const response = await fetch(`${config.API_URL}/api/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, password }),
             });
-
             if (!response.ok) {
                 throw new Error('Falha no login. Verifique suas credenciais.');
             }
-
             const data = await response.json();
             login(data.token, data.user);
             onLogin();
@@ -43,49 +39,69 @@ const Login: React.FC<LoginProps> = ({ onLogin, onForgotPasswordClick }) => {
     };
 
     return (
-        <div className="min-h-screen flex items-stretch text-gray-800 bg-white dark:bg-gray-900">
-            <div className="hidden lg:flex w-1/2 bg-gradient-to-br from-blue-700 to-blue-900 items-center justify-center p-12 text-white relative overflow-hidden">
-                <div className="z-10 w-full">
-                    <div className="flex items-center space-x-4 mb-6">
-                        <div className="bg-white/20 p-3 rounded-xl backdrop-blur-sm">
-                            <BookOpen className="h-10 w-10 text-white" />
-                        </div>
-                        <h1 className="text-4xl font-bold">EdWise AI</h1>
+        <div className="min-h-screen flex items-stretch text-ink-900 bg-ink-50">
+            {/* Brand panel */}
+            <div className="hidden lg:flex w-1/2 relative items-center justify-center p-12 overflow-hidden bg-gradient-to-br from-ink-900 via-ink-950 to-ink-900 text-white">
+                <div className="absolute inset-0 bg-brand-glow opacity-80" />
+                <div className="absolute -top-24 -left-24 w-96 h-96 bg-brand-500/20 rounded-full blur-3xl" />
+                <div className="absolute -bottom-24 -right-24 w-96 h-96 bg-brand-700/20 rounded-full blur-3xl" />
+
+                <div className="relative z-10 w-full max-w-md">
+                    <div className="chip bg-white/10 text-white/80 ring-1 ring-white/15 backdrop-blur-sm mb-8">
+                        <Sparkles className="w-3.5 h-3.5 text-brand-300" />
+                        Plataforma de aprendizado com IA
                     </div>
-                    <p className="text-lg text-blue-100 max-w-md">
-                        O único assistente de IA que realmente conhece sua instituição e seu conteúdo.
+                    <h1 className="font-display text-5xl font-semibold tracking-tight leading-[1.05] mb-6">
+                        Estude com <span className="bg-gradient-to-r from-brand-300 to-brand-500 bg-clip-text text-transparent">leveza</span>.<br />
+                        Ensine com clareza.
+                    </h1>
+                    <p className="text-base text-ink-300 leading-relaxed">
+                        O assistente que conhece sua instituição, seus cursos e o jeito que você ensina.
                     </p>
+
+                    <div className="mt-12 grid grid-cols-3 gap-4 text-sm text-ink-300">
+                        <div>
+                            <p className="font-display text-2xl font-semibold text-white">+10k</p>
+                            <p className="text-xs uppercase tracking-wider mt-1">Alunos</p>
+                        </div>
+                        <div>
+                            <p className="font-display text-2xl font-semibold text-white">200+</p>
+                            <p className="text-xs uppercase tracking-wider mt-1">Cursos</p>
+                        </div>
+                        <div>
+                            <p className="font-display text-2xl font-semibold text-white">98%</p>
+                            <p className="text-xs uppercase tracking-wider mt-1">Conclusão</p>
+                        </div>
+                    </div>
                 </div>
-                {/* Background decorative shapes */}
-                <div className="absolute top-0 -left-1/4 w-96 h-96 bg-white/10 rounded-full mix-blend-screen filter blur-xl opacity-70 animate-pulse"></div>
-                <div className="absolute bottom-0 -right-1/4 w-96 h-96 bg-white/10 rounded-full mix-blend-screen filter blur-xl opacity-70 animate-pulse delay-75"></div>
             </div>
 
-            <div className="w-full lg:w-1/2 flex items-center justify-center p-8">
+            {/* Form */}
+            <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-12">
                 <div className="max-w-md w-full">
-                    <div className="lg:hidden flex items-center justify-center space-x-3 mb-8">
-                        <div className="bg-blue-800 p-2 rounded-lg">
-                            <BookOpen className="h-8 w-8 text-white" />
-                        </div>
-                        <h1 className="text-2xl font-bold text-blue-800">EdWise AI</h1>
+                    <div className="lg:hidden mb-8 text-center">
+                        <h1 className="font-display text-2xl font-bold tracking-tight text-ink-900">EdWise AI</h1>
                     </div>
 
-                    <h2 className="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-2">Bem-vindo(a) de volta!</h2>
-                    <p className="text-gray-500 dark:text-gray-400 mb-8">Faça login para continuar para o seu painel.</p>
+                    <span className="label">Acesso</span>
+                    <h2 className="font-display text-3xl font-semibold tracking-tight text-ink-900 mb-1">
+                        Bem-vindo(a) de volta
+                    </h2>
+                    <p className="text-ink-600 mb-8">
+                        Faça login para continuar para o seu painel.
+                    </p>
 
                     {error && (
-                        <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-lg text-sm">
-                            {error}
+                        <div className="mb-5 flex items-start gap-3 rounded-xl ring-1 ring-red-200 bg-red-50 p-4 text-sm text-red-800">
+                            <span className="font-semibold">{error}</span>
                         </div>
                     )}
 
                     <form onSubmit={handleLogin} className="space-y-5">
                         <div>
-                            <label htmlFor="email" className="text-sm font-semibold text-gray-700 dark:text-gray-300">Endereço de E-mail</label>
-                            <div className="relative mt-2">
-                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                    <Mail className="h-5 w-5 text-gray-400" />
-                                </div>
+                            <label htmlFor="email" className="label">E-mail</label>
+                            <div className="relative">
+                                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400" />
                                 <input
                                     id="email"
                                     name="email"
@@ -94,18 +110,16 @@ const Login: React.FC<LoginProps> = ({ onLogin, onForgotPasswordClick }) => {
                                     required
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="w-full pl-10 pr-4 py-3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow placeholder-gray-400"
+                                    className="input pl-10"
                                     placeholder="voce@exemplo.com"
                                 />
                             </div>
                         </div>
 
                         <div>
-                            <label htmlFor="password" className="text-sm font-semibold text-gray-700 dark:text-gray-300">Senha</label>
-                            <div className="relative mt-2">
-                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                    <Lock className="h-5 w-5 text-gray-400" />
-                                </div>
+                            <label htmlFor="password" className="label">Senha</label>
+                            <div className="relative">
+                                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400" />
                                 <input
                                     id="password"
                                     name="password"
@@ -114,49 +128,45 @@ const Login: React.FC<LoginProps> = ({ onLogin, onForgotPasswordClick }) => {
                                     required
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="w-full pl-10 pr-4 py-3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow placeholder-gray-400"
+                                    className="input pl-10"
                                     placeholder="••••••••"
                                 />
                             </div>
                         </div>
 
                         <div className="flex items-center justify-between text-sm">
-                            <div className="flex items-center">
-                                <input id="remember-me" name="remember-me" type="checkbox" className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 dark:border-gray-600 rounded" />
-                                <label htmlFor="remember-me" className="ml-2 block text-gray-900 dark:text-gray-200">Lembrar de mim</label>
-                            </div>
+                            <label className="flex items-center gap-2 text-ink-700 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    className="h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500/30"
+                                />
+                                Lembrar de mim
+                            </label>
                             <button
                                 type="button"
                                 onClick={onForgotPasswordClick}
-                                className="font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-500"
+                                className="font-semibold text-brand-600 hover:text-brand-700 transition-colors"
                             >
                                 Esqueceu sua senha?
                             </button>
                         </div>
 
-                        <div className="pt-2">
-                            <button
-                                type="submit"
-                                disabled={isLoading}
-                                className="w-full flex justify-center py-3.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400 disabled:cursor-not-allowed transition-all"
-                            >
-                                {isLoading ? (
-                                    <>
-                                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373,0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                        </svg>
-                                        Entrando...
-                                    </>
-                                ) : (
-                                    'Entrar'
-                                )}
-                            </button>
-                        </div>
+                        <button
+                            type="submit"
+                            disabled={isLoading}
+                            className="btn-primary w-full justify-center py-3"
+                        >
+                            {isLoading ? (
+                                <>
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    Entrando...
+                                </>
+                            ) : 'Entrar'}
+                        </button>
                     </form>
 
-                    <p className="text-center text-gray-500 dark:text-gray-400 text-sm mt-10">
-                        EdWise AI © {new Date().getFullYear()} - Todos os direitos reservados
+                    <p className="text-center text-xs font-mono text-ink-500 mt-10">
+                        EdWise AI © {new Date().getFullYear()} · Todos os direitos reservados
                     </p>
                 </div>
             </div>

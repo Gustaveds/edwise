@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { X, Minimize2, Maximize2, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { X, Minimize2, Maximize2, Loader2, CheckCircle, AlertCircle, Info } from 'lucide-react';
 import config from '../config';
 
 interface ProcessingStatus {
@@ -18,16 +18,23 @@ interface MinimizableProcessingModalProps {
     onClose: () => void;
 }
 
+const STAGES: Record<string, { label: string }> = {
+    initializing:        { label: 'Inicializando…' },
+    downloading:         { label: 'Baixando vídeo…' },
+    transcribing:        { label: 'Transcrevendo com Whisper…' },
+    generating_summary:  { label: 'Gerando resumo com IA…' },
+    generating_faqs:     { label: 'Criando FAQs…' },
+    creating_embeddings: { label: 'Criando embeddings…' },
+    finalizing:          { label: 'Finalizando…' },
+    complete:            { label: 'Completo!' },
+};
+
 const MinimizableProcessingModal: React.FC<MinimizableProcessingModalProps> = ({
-    videoId,
-    videoTitle,
-    onComplete,
-    onClose
+    videoId, videoTitle, onComplete, onClose
 }) => {
     const [isMinimized, setIsMinimized] = useState(false);
     const [processingStatus, setProcessingStatus] = useState<ProcessingStatus | null>(null);
 
-    // Polling for processing status
     useEffect(() => {
         const pollStatus = async () => {
             try {
@@ -36,219 +43,138 @@ const MinimizableProcessingModal: React.FC<MinimizableProcessingModalProps> = ({
                     `${config.API_URL}/api/videos/${videoId}/processing-status`,
                     { headers: { Authorization: `Bearer ${token}` } }
                 );
-
                 const status: ProcessingStatus = response.data;
                 setProcessingStatus(status);
-
-                if (status.status === 'ready') {
-                    // Auto-show if minimized when complete
-                    if (isMinimized) {
-                        setIsMinimized(false);
-                    }
-                }
-            } catch (err: any) {
+                if (status.status === 'ready' && isMinimized) setIsMinimized(false);
+            } catch (err) {
                 console.error('Error polling status:', err);
             }
         };
-
-        // Poll every 3 seconds
         const interval = setInterval(pollStatus, 3000);
-        pollStatus(); // Initial poll
-
+        pollStatus();
         return () => clearInterval(interval);
     }, [videoId, isMinimized]);
-
-    const getStageDisplay = (stage?: string, isQueued?: boolean) => {
-        // Show queue state with priority
-        if (isQueued) {
-            return { label: 'Aguardando na fila...', icon: '⏳' };
-        }
-
-        const stages: Record<string, { label: string; icon: string }> = {
-            initializing: { label: 'Inicializando...', icon: '🔄' },
-            downloading: { label: 'Baixando vídeo...', icon: '📥' },
-            transcribing: { label: 'Transcrevendo com Whisper...', icon: '🎙️' },
-            generating_summary: { label: 'Gerando resumo com IA...', icon: '🤖' },
-            generating_faqs: { label: 'Criando FAQs...', icon: '❓' },
-            creating_embeddings: { label: 'Criando embeddings...', icon: '🧠' },
-            finalizing: { label: 'Finalizando...', icon: '💾' },
-            complete: { label: 'Completo!', icon: '✅' },
-        };
-
-        return stages[stage || 'initializing'] || { label: 'Processando...', icon: '⚙️' };
-    };
 
     const duration = processingStatus?.processingTimeSeconds || 0;
     const minutes = Math.floor(duration / 60);
     const seconds = duration % 60;
     const isQueued = processingStatus?.processingState === 'queued';
-    const stageInfo = getStageDisplay(processingStatus?.current_stage, isQueued);
+    const stageLabel = isQueued
+        ? 'Aguardando na fila…'
+        : STAGES[processingStatus?.current_stage || 'initializing']?.label || 'Processando…';
 
-    // Minimized view (Bottom-right corner) - NO BACKDROP
+    /* ── Minimized chip in the corner ───────────────────────────────── */
     if (isMinimized) {
         return (
-            <div className="fixed bottom-4 right-4 bg-white rounded-lg shadow-2xl border border-gray-300 w-80 z-50 transition-all duration-300">
-                <div className="p-3 flex items-center gap-3 cursor-pointer" onClick={() => setIsMinimized(false)}>
-                    <Loader2 className={`w-5 h-5 flex-shrink-0 ${isQueued ? 'text-yellow-600' : 'text-blue-600'} animate-spin`} />
+            <div className="fixed bottom-4 right-4 surface w-80 z-50 transition-all">
+                <button
+                    onClick={() => setIsMinimized(false)}
+                    className="w-full p-3 flex items-center gap-3 text-left hover:bg-ink-50/60 transition-colors"
+                >
+                    <Loader2 className={`w-4 h-4 flex-shrink-0 ${isQueued ? 'text-amber-500' : 'text-brand-500'} animate-spin`} />
                     <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">{videoTitle}</p>
-                        <p className="text-xs text-gray-600 truncate">{stageInfo.label}</p>
+                        <p className="text-sm font-medium text-ink-900 truncate">{videoTitle}</p>
+                        <p className="text-xs text-ink-500 truncate">{stageLabel}</p>
                     </div>
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setIsMinimized(false);
-                        }}
-                        className="p-1 hover:bg-gray-100 rounded transition-colors flex-shrink-0"
-                        title="Expandir"
-                    >
-                        <Maximize2 className="w-4 h-4 text-gray-600" />
-                    </button>
-                </div>
+                    <Maximize2 className="w-3.5 h-3.5 text-ink-400 flex-shrink-0" />
+                </button>
                 <div className="px-3 pb-3">
-                    <div className="w-full bg-gray-200 rounded-full h-1.5">
-                        <div
-                            className="bg-blue-600 h-1.5 rounded-full transition-all duration-500 animate-pulse"
-                            style={{ width: '100%' }}
-                        />
+                    <div className="w-full bg-ink-100 rounded-full h-1 overflow-hidden">
+                        <div className={`h-full rounded-full ${isQueued ? 'bg-amber-500' : 'bg-brand-gradient'} animate-pulse`} style={{ width: '100%' }} />
                     </div>
                 </div>
             </div>
         );
     }
 
-    // Full modal view - WITH BACKDROP
+    /* ── Full modal ─────────────────────────────────────────────────── */
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-2xl max-w-md w-full">
-                {/* Header */}
-                <div className="flex items-center justify-between p-4 border-b border-gray-200">
-                    <div className="flex items-center gap-2">
+        <div className="fixed inset-0 z-50 grid place-items-center p-4 sm:p-6 animate-fade-in-up">
+            <div className="absolute inset-0 bg-ink-950/40 backdrop-blur-sm" />
+            <div className="relative glass max-w-md w-full overflow-hidden">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-ink-200">
+                    <div className="flex items-center gap-3">
                         {processingStatus?.status === 'ready' ? (
-                            <CheckCircle className="w-5 h-5 text-green-600" />
+                            <div className="w-9 h-9 rounded-xl bg-emerald-50 grid place-items-center text-emerald-600">
+                                <CheckCircle className="w-4 h-4" />
+                            </div>
                         ) : processingStatus?.status === 'error' ? (
-                            <AlertCircle className="w-5 h-5 text-red-600" />
+                            <div className="w-9 h-9 rounded-xl bg-red-50 grid place-items-center text-red-600">
+                                <AlertCircle className="w-4 h-4" />
+                            </div>
                         ) : (
-                            <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+                            <div className="w-9 h-9 rounded-xl bg-brand-50 grid place-items-center text-brand-600">
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                            </div>
                         )}
-                        <h3 className="text-lg font-semibold text-gray-800">
-                            {processingStatus?.status === 'ready'
-                                ? 'Processamento Concluído'
-                                : processingStatus?.status === 'error'
-                                    ? 'Erro no Processamento'
-                                    : 'Processando Vídeo'}
+                        <h3 className="font-display text-base font-semibold text-ink-900">
+                            {processingStatus?.status === 'ready'    ? 'Processamento concluído'
+                             : processingStatus?.status === 'error'  ? 'Erro no processamento'
+                             :                                         'Processando vídeo'}
                         </h3>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
                         {processingStatus?.status === 'processing' && (
-                            <button
-                                onClick={() => setIsMinimized(true)}
-                                className="p-1.5 hover:bg-gray-100 rounded transition-colors"
-                                title="Minimizar"
-                            >
-                                <Minimize2 className="w-4 h-4 text-gray-600" />
+                            <button onClick={() => setIsMinimized(true)} className="p-1.5 rounded-lg text-ink-500 hover:bg-ink-100 hover:text-ink-900" title="Minimizar">
+                                <Minimize2 className="w-4 h-4" />
                             </button>
                         )}
-                        {processingStatus?.status === 'ready' && (
-                            <button
-                                onClick={onClose}
-                                className="p-1.5 hover:bg-gray-100 rounded transition-colors"
-                            >
-                                <X className="w-4 h-4 text-gray-600" />
+                        {processingStatus?.status !== 'processing' && (
+                            <button onClick={onClose} className="p-1.5 rounded-lg text-ink-500 hover:bg-ink-100 hover:text-ink-900" aria-label="Fechar">
+                                <X className="w-4 h-4" />
                             </button>
                         )}
                     </div>
                 </div>
 
-                {/* Body */}
                 <div className="p-6 space-y-4">
-                    {/* Video Info */}
-                    <div className="bg-blue-50 p-3 rounded-md">
-                        <p className="text-sm font-medium text-gray-800">{videoTitle}</p>
+                    <div className="rounded-xl bg-brand-50 ring-1 ring-brand-100 p-3">
+                        <p className="text-sm font-medium text-ink-900 truncate">{videoTitle}</p>
                     </div>
 
                     {processingStatus?.status === 'ready' ? (
-                        // Success message
-                        <div className="text-center py-4">
-                            <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-3" />
-                            <p className="text-gray-700 font-medium mb-2">Vídeo processado com sucesso!</p>
-                            <p className="text-sm text-gray-600">
+                        <div className="text-center py-3">
+                            <p className="font-display text-base font-semibold text-ink-900">Vídeo processado com sucesso!</p>
+                            <p className="text-sm text-ink-600 mt-1">
                                 Resumo, FAQs e transcrição foram gerados pela IA.
                             </p>
                         </div>
                     ) : processingStatus?.status === 'error' ? (
-                        // Error message
-                        <div className="text-center py-4">
-                            <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-3" />
-                            <p className="text-gray-700 font-medium mb-2">Erro ao processar vídeo</p>
-                            <p className="text-sm text-red-600">{processingStatus.error}</p>
+                        <div className="text-center py-3">
+                            <p className="font-display text-base font-semibold text-ink-900">Erro ao processar vídeo</p>
+                            <p className="text-sm text-red-600 mt-1">{processingStatus.error}</p>
                         </div>
                     ) : (
-                        // Processing view
                         <>
-                            {/* Current Stage */}
-                            {isQueued ? (
-                                // Queue waiting view
-                                <div className="flex items-center gap-3 p-4 bg-yellow-50 rounded-md border border-yellow-200">
-                                    <span className="text-3xl">{stageInfo.icon}</span>
-                                    <div className="flex-1">
-                                        <p className="text-sm font-medium text-gray-800">
-                                            Aguardando processamento
-                                        </p>
-                                        <p className="text-xs text-gray-600">
-                                            Seu vídeo está na fila e será processado em breve
-                                        </p>
-                                    </div>
+                            <div className={`flex items-center gap-3 p-4 rounded-xl ring-1 ${isQueued ? 'bg-amber-50 ring-amber-100' : 'bg-ink-50 ring-ink-100'}`}>
+                                <Loader2 className={`w-5 h-5 flex-shrink-0 ${isQueued ? 'text-amber-600' : 'text-brand-600'} animate-spin`} />
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-ink-900">{stageLabel}</p>
+                                    <p className="text-xs text-ink-500 font-mono">
+                                        {isQueued ? 'Seu vídeo está na fila' : `Tempo decorrido: ${minutes}m ${seconds}s`}
+                                    </p>
                                 </div>
-                            ) : (
-                                // Normal processing view
-                                <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-md">
-                                    <span className="text-3xl">{stageInfo.icon}</span>
-                                    <div className="flex-1">
-                                        <p className="text-sm font-medium text-gray-800">{stageInfo.label}</p>
-                                        <p className="text-xs text-gray-600">
-                                            Tempo decorrido: {minutes}m {seconds}s
-                                        </p>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Progress Bar */}
-                            <div className="space-y-2">
-                                <div className="w-full bg-gray-200 rounded-full h-2">
-                                    <div
-                                        className={`h-2 rounded-full transition-all duration-500 ${isQueued ? 'bg-yellow-500' : 'bg-blue-600'} animate-pulse`}
-                                        style={{ width: '100%' }}
-                                    />
-                                </div>
-                                <p className="text-xs text-center text-gray-500">
-                                    {isQueued
-                                        ? 'Aguardando na fila de processamento...'
-                                        : 'Aguarde enquanto seu vídeo está sendo processado...'
-                                    }
-                                </p>
                             </div>
 
-                            {/* Info Box */}
-                            <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3">
-                                <p className="text-xs text-yellow-800">
-                                    ℹ️ Você pode minimizar esta janela e continuar editando. O processamento
-                                    continuará em segundo plano e você será notificado quando concluir.
+                            <div className="w-full bg-ink-100 rounded-full h-1.5 overflow-hidden">
+                                <div className={`h-full rounded-full ${isQueued ? 'bg-amber-500' : 'bg-brand-gradient'} animate-pulse`} style={{ width: '100%' }} />
+                            </div>
+
+                            <div className="rounded-xl bg-blue-50 ring-1 ring-blue-100 p-3 flex items-start gap-2">
+                                <Info className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                                <p className="text-xs text-blue-800">
+                                    Você pode minimizar esta janela e continuar editando. O processamento continuará em segundo plano.
                                 </p>
                             </div>
                         </>
                     )}
                 </div>
 
-                {/* Footer */}
                 {processingStatus?.status === 'ready' && (
-                    <div className="p-4 border-t border-gray-200 flex justify-end">
+                    <div className="px-6 py-4 border-t border-ink-200 bg-white/60 flex justify-end">
                         <button
-                            onClick={() => {
-                                onComplete();
-                                onClose();
-                            }}
-                            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors font-medium"
+                            onClick={() => { onComplete(); onClose(); }}
+                            className="btn-primary"
                         >
                             Fechar
                         </button>

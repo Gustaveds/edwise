@@ -61,7 +61,7 @@ DB_USER="${DB_USER:-postgres}"
 DB_PASSWORD="${DB_PASSWORD:-postgres}"
 
 # ─── 2. Libera portas 3000/3001 ─────────────────────────────
-echo -e "${YELLOW}[1/6] Liberando portas 3000 e 3001...${NC}"
+echo -e "${YELLOW}[1/5] Liberando portas 3000 e 3001...${NC}"
 for port in 3000 3001; do
     if command -v lsof >/dev/null 2>&1 && lsof -i :$port >/dev/null 2>&1; then
         echo -e "${YELLOW}  matando processo na porta $port${NC}"
@@ -70,7 +70,7 @@ for port in 3000 3001; do
 done
 
 # ─── 3. Sobe Postgres + MinIO ───────────────────────────────
-echo -e "${YELLOW}[2/6] Subindo Postgres e MinIO em docker...${NC}"
+echo -e "${YELLOW}[2/5] Subindo Postgres e MinIO em docker...${NC}"
 $DC -f "$ROOT_DIR/docker-compose.dev.yml" up -d db minio minio-init
 
 echo -e "${YELLOW}  aguardando Postgres ficar pronto...${NC}"
@@ -102,7 +102,7 @@ for i in $(seq 1 30); do
 done
 
 # ─── 4. Dependências ────────────────────────────────────────
-echo -e "${YELLOW}[3/6] Verificando dependências...${NC}"
+echo -e "${YELLOW}[3/5] Verificando dependências...${NC}"
 if [ ! -d "$ROOT_DIR/node_modules" ]; then
     echo -e "${YELLOW}  instalando deps do frontend...${NC}"
     (cd "$ROOT_DIR" && npm install)
@@ -114,7 +114,7 @@ fi
 echo -e "${GREEN}  ✓ deps OK${NC}"
 
 # ─── 5. Schema + migrations ─────────────────────────────────
-echo -e "${YELLOW}[4/6] Preparando schema...${NC}"
+echo -e "${YELLOW}[4/5] Preparando schema...${NC}"
 
 # Init-db é destrutivo (drop em videos/video_segments) — só roda na 1ª vez,
 # detectando ausência da tabela `users`.
@@ -131,13 +131,11 @@ fi
 echo -e "${YELLOW}  rodando migrations pendentes...${NC}"
 (cd "$ROOT_DIR" && node server/scripts/migrate.js up)
 
-# ─── 6. Build do frontend ───────────────────────────────────
-echo -e "${YELLOW}[5/6] Buildando frontend...${NC}"
-(cd "$ROOT_DIR" && npm run build)
-echo -e "${GREEN}  ✓ build OK${NC}"
+echo -e "${YELLOW}  garantindo usuários de teste (admin/professor/student)...${NC}"
+(cd "$ROOT_DIR/server" && node create-test-users.js)
 
-# ─── 7. Sobe backend + frontend ─────────────────────────────
-echo -e "${YELLOW}[6/6] Iniciando serviços...${NC}"
+# ─── 6. Sobe backend + frontend (com hot reload) ────────────
+echo -e "${YELLOW}[5/5] Iniciando serviços (hot reload ativo)...${NC}"
 
 PIDS=()
 
@@ -158,14 +156,14 @@ cleanup() {
 }
 trap cleanup SIGINT SIGTERM
 
-# Backend
+# Backend (node --watch — reinicia automaticamente em alterações)
 (
     cd "$ROOT_DIR/server" || exit 1
-    node index.js
+    node --watch index.js
 ) > "$ROOT_DIR/backend.log" 2>&1 &
 PIDS+=($!)
 
-# Frontend (Vite dev)
+# Frontend (Vite dev — HMR ativo)
 (
     cd "$ROOT_DIR" || exit 1
     npm run dev

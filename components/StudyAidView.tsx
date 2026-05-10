@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { StudyAid, Flashcard, Summary } from '../types';
-import { X, RefreshCw, ChevronLeft, ChevronRight, ListChecks, Save } from 'lucide-react';
+import { RefreshCw, ChevronLeft, ChevronRight, ListChecks, Save } from 'lucide-react';
 import config from '../config';
+import Modal from './ui/Modal';
+import { useToast } from './ui/Toast';
 
-// Flashcard Component
 const FlashcardViewer: React.FC<{ flashcards: Flashcard[] }> = ({ flashcards }) => {
     const [currentIndex, setCurrentIndex] = useState(0);
     const [isFlipped, setIsFlipped] = useState(false);
@@ -11,13 +12,13 @@ const FlashcardViewer: React.FC<{ flashcards: Flashcard[] }> = ({ flashcards }) 
     const handleFlip = () => setIsFlipped(!isFlipped);
     const handleNext = () => {
         if (currentIndex < flashcards.length - 1) {
-            setIsFlipped(false); // Show front of next card
+            setIsFlipped(false);
             setTimeout(() => setCurrentIndex(currentIndex + 1), 150);
         }
     };
     const handlePrev = () => {
         if (currentIndex > 0) {
-            setIsFlipped(false); // Show front of previous card
+            setIsFlipped(false);
             setTimeout(() => setCurrentIndex(currentIndex - 1), 150);
         }
     };
@@ -26,22 +27,15 @@ const FlashcardViewer: React.FC<{ flashcards: Flashcard[] }> = ({ flashcards }) 
 
     return (
         <div className="flex flex-col items-center">
-            <div
-                className="w-full max-w-lg h-64 perspective-1000"
-                onClick={handleFlip}
-            >
-                <div
-                    className={`relative w-full h-full transform-style-preserve-3d transition-transform duration-500 ${isFlipped ? 'rotate-y-180' : ''}`}
-                >
-                    {/* Front */}
-                    <div className="absolute w-full h-full backface-hidden bg-white dark:bg-gray-700 border-2 border-blue-300 dark:border-blue-800 rounded-xl shadow-lg flex flex-col items-center justify-center p-6 text-center">
-                        <p className="text-xs text-blue-500 dark:text-blue-400 font-semibold mb-2">PERGUNTA</p>
-                        <p className="text-lg font-semibold text-gray-800 dark:text-gray-100">{card.question}</p>
+            <div className="w-full max-w-lg h-64 perspective-1000 cursor-pointer" onClick={handleFlip}>
+                <div className={`relative w-full h-full transform-style-preserve-3d transition-transform duration-500 ${isFlipped ? 'rotate-y-180' : ''}`}>
+                    <div className="absolute w-full h-full backface-hidden bg-white ring-1 ring-ink-200 rounded-modal shadow-card flex flex-col items-center justify-center p-6 text-center">
+                        <p className="text-xs font-mono uppercase tracking-wider text-brand-500 mb-2">Pergunta</p>
+                        <p className="font-display text-lg font-semibold text-ink-900">{card.question}</p>
                     </div>
-                    {/* Back */}
-                    <div className="absolute w-full h-full backface-hidden bg-blue-50 dark:bg-blue-900/50 border-2 border-blue-300 dark:border-blue-800 rounded-xl shadow-lg flex flex-col items-center justify-center p-6 text-center rotate-y-180">
-                        <p className="text-xs text-green-500 dark:text-green-400 font-semibold mb-2">RESPOSTA</p>
-                        <p className="text-md text-gray-700 dark:text-gray-200">{card.answer}</p>
+                    <div className="absolute w-full h-full backface-hidden bg-brand-gradient-soft ring-1 ring-brand-100 rounded-modal shadow-card flex flex-col items-center justify-center p-6 text-center rotate-y-180">
+                        <p className="text-xs font-mono uppercase tracking-wider text-emerald-600 mb-2">Resposta</p>
+                        <p className="text-base text-ink-800">{card.answer}</p>
                     </div>
                 </div>
             </div>
@@ -51,49 +45,40 @@ const FlashcardViewer: React.FC<{ flashcards: Flashcard[] }> = ({ flashcards }) 
                 .rotate-y-180 { transform: rotateY(180deg); }
                 .backface-hidden { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
             `}</style>
-            <div className="flex items-center justify-between w-full max-w-lg mt-4">
-                <button onClick={handlePrev} disabled={currentIndex === 0} className="p-3 rounded-full bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 disabled:opacity-50 text-gray-700 dark:text-gray-200">
-                    <ChevronLeft className="w-5 h-5" />
+            <div className="flex items-center justify-between w-full max-w-lg mt-5">
+                <button onClick={handlePrev} disabled={currentIndex === 0} className="btn-secondary !p-2 !rounded-full">
+                    <ChevronLeft className="w-4 h-4" />
                 </button>
-                <div className="flex flex-col items-center">
-                    <span className="text-sm font-semibold text-gray-600 dark:text-gray-300">
-                        {currentIndex + 1} / {flashcards.length}
-                    </span>
-                    <button onClick={handleFlip} className="text-sm text-blue-600 dark:text-blue-400 hover:underline flex items-center mt-1">
-                        <RefreshCw className="w-3 h-3 mr-1" /> Virar Cartão
+                <div className="flex flex-col items-center gap-1">
+                    <span className="text-sm font-mono text-ink-500">{currentIndex + 1} / {flashcards.length}</span>
+                    <button onClick={handleFlip} className="text-xs text-brand-600 hover:text-brand-700 inline-flex items-center gap-1 font-medium">
+                        <RefreshCw className="w-3 h-3" /> Virar cartão
                     </button>
                 </div>
-                <button onClick={handleNext} disabled={currentIndex === flashcards.length - 1} className="p-3 rounded-full bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 disabled:opacity-50 text-gray-700 dark:text-gray-200">
-                    <ChevronRight className="w-5 h-5" />
+                <button onClick={handleNext} disabled={currentIndex === flashcards.length - 1} className="btn-secondary !p-2 !rounded-full">
+                    <ChevronRight className="w-4 h-4" />
                 </button>
             </div>
         </div>
     );
 };
 
-// Summary Component
-const SummaryViewer: React.FC<{ summary: Summary }> = ({ summary }) => {
-    return (
-        <div className="w-full max-w-2xl mx-auto">
-            <h4 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center mb-4">
-                <ListChecks className="w-6 h-6 mr-3 text-blue-600 dark:text-blue-400" />
-                {summary.title}
-            </h4>
-            <ul className="space-y-3 bg-gray-50 dark:bg-gray-700 p-5 rounded-lg border dark:border-gray-600">
-                {summary.points.map((point, index) => (
-                    <li key={index} className="text-gray-700 dark:text-gray-200 flex items-start">
-                        <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-                        <span>{point}</span>
-                    </li>
-                ))}
-            </ul>
-        </div>
-    )
-}
-
-
-
-// ... FlashcardViewer and SummaryViewer components
+const SummaryViewer: React.FC<{ summary: Summary }> = ({ summary }) => (
+    <div>
+        <h4 className="font-display text-xl font-semibold text-ink-900 flex items-center gap-2 mb-4">
+            <ListChecks className="w-5 h-5 text-brand-500" />
+            {summary.title}
+        </h4>
+        <ul className="space-y-2 bg-ink-50 ring-1 ring-ink-200 rounded-card p-5">
+            {summary.points.map((point, index) => (
+                <li key={index} className="text-ink-700 flex items-start gap-3 text-sm">
+                    <div className="w-1.5 h-1.5 bg-brand-500 rounded-full mt-2 flex-shrink-0" />
+                    <span>{point}</span>
+                </li>
+            ))}
+        </ul>
+    </div>
+);
 
 interface StudyAidViewProps {
     aid: StudyAid;
@@ -102,9 +87,10 @@ interface StudyAidViewProps {
 }
 
 const StudyAidView: React.FC<StudyAidViewProps> = ({ aid, onClose, courseId }) => {
+    const toast = useToast();
+
     const handleSave = async () => {
         if (aid.type !== 'flashcards') return;
-
         try {
             const response = await fetch(`${config.API_URL}/api/flashcards`, {
                 method: 'POST',
@@ -114,51 +100,40 @@ const StudyAidView: React.FC<StudyAidViewProps> = ({ aid, onClose, courseId }) =
                 },
                 body: JSON.stringify({
                     course_id: courseId,
-                    title: 'Flashcards gerados por IA', // Could prompt for title
+                    title: 'Flashcards gerados por IA',
                     cards: aid.content,
                 }),
             });
-
             if (!response.ok) throw new Error('Failed to save flashcards');
-            alert('Flashcards salvos com sucesso!');
+            toast.success('Flashcards salvos com sucesso!');
         } catch (error) {
             console.error('Error saving flashcards:', error);
-            alert('Erro ao salvar flashcards.');
+            toast.error('Erro ao salvar flashcards');
         }
     };
 
     return (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="relative bg-gray-100 dark:bg-gray-800 p-6 rounded-2xl shadow-2xl w-full max-w-3xl animate-fade-in-up">
-                <div className="absolute top-4 right-4 flex space-x-2 z-10">
-                    {aid.type === 'flashcards' && (
-                        <button
-                            onClick={handleSave}
-                            className="p-2 rounded-full bg-blue-100 dark:bg-blue-900/50 hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors text-blue-600 dark:text-blue-400"
-                            title="Salvar Flashcards"
-                        >
-                            <Save className="w-5 h-5" />
+        <Modal
+            isOpen
+            onClose={onClose}
+            size="lg"
+            title={aid.type === 'flashcards' ? 'Flashcards' : 'Resumo'}
+            footer={
+                aid.type === 'flashcards' ? (
+                    <>
+                        <button onClick={onClose} className="btn-secondary">Fechar</button>
+                        <button onClick={handleSave} className="btn-primary">
+                            <Save className="w-4 h-4" /> Salvar flashcards
                         </button>
-                    )}
-                    <button onClick={onClose} className="p-2 rounded-full bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">
-                        <X className="w-5 h-5 text-gray-700 dark:text-gray-200" />
-                    </button>
-                </div>
-
-                {aid.type === 'flashcards' && <FlashcardViewer flashcards={aid.content as Flashcard[]} />}
-                {aid.type === 'summary' && <SummaryViewer summary={aid.content as Summary} />}
-
-            </div>
-            <style>{`
-                @keyframes fade-in-up {
-                    from { opacity: 0; transform: translateY(20px) scale(0.95); }
-                    to { opacity: 1; transform: translateY(0) scale(1); }
-                }
-                .animate-fade-in-up {
-                    animation: fade-in-up 0.3s ease-out forwards;
-                }
-            `}</style>
-        </div>
+                    </>
+                ) : (
+                    <button onClick={onClose} className="btn-secondary">Fechar</button>
+                )
+            }
+        >
+            {aid.type === 'flashcards' && <FlashcardViewer flashcards={aid.content as Flashcard[]} />}
+            {aid.type === 'summary' && <SummaryViewer summary={aid.content as Summary} />}
+        </Modal>
     );
 };
 

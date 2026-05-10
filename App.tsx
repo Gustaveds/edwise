@@ -9,10 +9,19 @@ import { UserRole } from './types';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import SavedItemsView from './components/SavedItemsView';
 import AdminDashboard from './components/AdminDashboard';
+import DesignSystem from './components/DesignSystem';
+import MyCourses from './components/MyCourses';
+import CalendarView from './components/CalendarView';
+import Uploads from './components/Uploads';
+import { DialogProvider } from './components/ui/ConfirmDialog';
+import { ToastProvider } from './components/ui/Toast';
 
 const AppContent: React.FC = () => {
   const { isAuthenticated, user, logout } = useAuth();
-  const [activeView, setActiveView] = useState('dashboard');
+  const [activeView, setActiveView] = useState(() => {
+    if (typeof window !== 'undefined' && window.location.hash === '#design-system') return 'design-system';
+    return 'dashboard';
+  });
   const [impersonatedRole, setImpersonatedRole] = useState<UserRole | null>(null);
 
   // Determine real role
@@ -27,6 +36,10 @@ const AppContent: React.FC = () => {
     if (activeView === 'settings') return <SettingsDashboard />;
     if (activeView === 'admin' && userRole === UserRole.Admin) return <AdminDashboard />;
     if (activeView === 'saved') return <SavedItemsView />;
+    if (activeView === 'courses') return <MyCourses userRole={userRole} />;
+    if (activeView === 'calendar') return <CalendarView userRole={userRole} />;
+    if (activeView === 'uploads' && userRole !== UserRole.Student) return <Uploads />;
+    if (activeView === 'design-system') return <DesignSystem onClose={() => setActiveView('dashboard')} />;
 
     // Default Views
     if (userRole === UserRole.Student) {
@@ -42,8 +55,11 @@ const AppContent: React.FC = () => {
     return <Login onLogin={() => { }} onForgotPasswordClick={() => { }} />;
   }
 
-  // Check if we need full screen (e.g. for player) - handled inside components for now or via state
-  // For now, Layout handles the structure.
+  // Design System runs as a standalone screen — bypass the app shell so the
+  // showcase has full control over its own layout.
+  if (activeView === 'design-system') {
+    return <DesignSystem onClose={() => setActiveView('dashboard')} />;
+  }
 
   return (
     <Layout
@@ -62,7 +78,11 @@ const AppContent: React.FC = () => {
 const App: React.FC = () => {
   return (
     <AuthProvider>
-      <AppContent />
+      <ToastProvider>
+        <DialogProvider>
+          <AppContent />
+        </DialogProvider>
+      </ToastProvider>
     </AuthProvider>
   );
 };

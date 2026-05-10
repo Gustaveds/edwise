@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { MaterialType } from '../../types';
 import VideoAIDataPanel from '../VideoAIDataPanel';
-import { Video, Trash2, Play } from 'lucide-react';
+import { Video, Trash2, Save } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import config from '../../config';
+import { useDialog } from '../ui/ConfirmDialog';
+import { useToast } from '../ui/Toast';
 
 interface VideoFormProps {
     onSubmit: (data: any) => void;
@@ -13,62 +15,52 @@ interface VideoFormProps {
 
 const VideoForm: React.FC<VideoFormProps> = ({ onSubmit, onCancel, initialData }) => {
     const { token } = useAuth();
+    const { confirm } = useDialog();
+    const toast = useToast();
     const [title, setTitle] = useState(initialData?.title || '');
     const [url, setUrl] = useState(initialData?.content || '');
     const [description, setDescription] = useState(initialData?.description || '');
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        onSubmit({
-            title,
-            type: MaterialType.Video,
-            content: url,
-            description
-        });
+        onSubmit({ title, type: MaterialType.Video, content: url, description });
+        toast.success('Vídeo salvo');
     };
 
     const handleDelete = async () => {
-        if (!confirm('Tem certeza que deseja excluir este vídeo? Esta ação é irreversível.')) return;
-
+        const ok = await confirm({
+            title: 'Excluir este vídeo?',
+            message: 'Esta ação é irreversível.',
+            confirmLabel: 'Excluir vídeo',
+            tone: 'danger',
+        });
+        if (!ok) return;
         try {
             const res = await fetch(`${config.API_URL}/api/contents/${initialData.id}`, {
                 method: 'DELETE',
                 headers: { Authorization: `Bearer ${token}` }
             });
-
             if (!res.ok) throw new Error('Failed to delete video');
-
-            onCancel(); // Close form/refresh
-            // We might need to trigger a refresh in parent. onCancel just closes. 
-            // Ideally onSubmit or a new prop onDelete should be called. 
-            // But CourseEditor refreshes on state change? 
-            // Actually CourseEditor needs to know to refresh. 
-            // Let's assume onCancel will trigger a re-fetch or we should reload the page?
-            // For now, let's just reload window or rely on parent. 
-            // Actually, let's call onSubmit with a special flag or just reload.
-            window.location.reload(); // Simple fix for now to ensure state sync
+            onCancel();
+            window.location.reload();
         } catch (err) {
             console.error(err);
-            alert('Erro ao excluir vídeo.');
+            toast.error('Erro ao excluir vídeo');
         }
     };
 
-    // Check if this is an uploaded video (has video_id in initialData)
     const isUploadedVideo = initialData?.video_id;
 
     return (
-        <div className="space-y-6">
-            {/* Video Info Form */}
+        <div className="p-8 space-y-8">
             <form onSubmit={handleSubmit} className="space-y-6">
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        Título da Aula
-                    </label>
+                    <label className="label">Título da aula</label>
                     <input
                         type="text"
                         value={title}
                         onChange={(e) => setTitle(e.target.value)}
-                        className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                        className="input"
                         placeholder="Ex: Introdução ao React"
                         required
                     />
@@ -76,14 +68,12 @@ const VideoForm: React.FC<VideoFormProps> = ({ onSubmit, onCancel, initialData }
 
                 {!isUploadedVideo && (
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                            URL do Vídeo (YouTube/Vimeo)
-                        </label>
+                        <label className="label">URL do vídeo (YouTube/Vimeo)</label>
                         <input
                             type="url"
                             value={url}
                             onChange={(e) => setUrl(e.target.value)}
-                            className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                            className="input font-mono text-xs"
                             placeholder="https://youtube.com/watch?v=..."
                             required
                         />
@@ -92,7 +82,7 @@ const VideoForm: React.FC<VideoFormProps> = ({ onSubmit, onCancel, initialData }
 
                 {isUploadedVideo && (
                     <div className="space-y-4">
-                        <div className="bg-black rounded-lg overflow-hidden aspect-video relative group">
+                        <div className="bg-ink-950 rounded-card overflow-hidden aspect-video">
                             <video
                                 controls
                                 className="w-full h-full"
@@ -102,65 +92,50 @@ const VideoForm: React.FC<VideoFormProps> = ({ onSubmit, onCancel, initialData }
                             </video>
                         </div>
 
-                        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-                            <div className="flex items-center gap-2 text-blue-700 dark:text-blue-300">
-                                <Video className="w-5 h-5" />
-                                <span className="font-medium">Vídeo Carregado</span>
+                        <div className="rounded-xl ring-1 ring-blue-100 bg-blue-50 p-4 flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-lg bg-blue-500 grid place-items-center text-white flex-shrink-0">
+                                <Video className="w-4 h-4" />
                             </div>
-                            <p className="text-sm text-blue-600 dark:text-blue-400 mt-1">
-                                ID do Vídeo: #{initialData.video_id}
-                            </p>
+                            <div>
+                                <p className="text-sm font-semibold text-blue-900">Vídeo carregado</p>
+                                <p className="text-xs text-blue-700 font-mono">ID #{initialData.video_id}</p>
+                            </div>
                         </div>
                     </div>
                 )}
 
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        Descrição (Opcional)
-                    </label>
+                    <label className="label">Descrição (opcional)</label>
                     <textarea
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         rows={4}
-                        className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                        className="input resize-y"
                         placeholder="Descreva o que será abordado nesta aula..."
                     />
                 </div>
 
-                <div className="flex justify-between pt-4 border-t border-gray-200 dark:border-gray-700">
-                    {initialData?.id && (
-                        <button
-                            type="button"
-                            onClick={handleDelete}
-                            className="px-4 py-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg flex items-center gap-2"
-                        >
-                            <Trash2 className="w-4 h-4" />
-                            Excluir Vídeo
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-6 border-t border-ink-100">
+                    {initialData?.id ? (
+                        <button type="button" onClick={handleDelete} className="btn-danger-ghost">
+                            <Trash2 className="w-4 h-4" /> Excluir vídeo
                         </button>
-                    )}
-                    <div className="flex space-x-3 ml-auto">
-                        <button
-                            type="button"
-                            onClick={onCancel}
-                            className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
-                        >
+                    ) : <span />}
+                    <div className="flex gap-3 ml-auto">
+                        <button type="button" onClick={onCancel} className="btn-secondary">
                             Cancelar
                         </button>
-                        <button
-                            type="submit"
-                            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg"
-                        >
-                            Salvar Vídeo
+                        <button type="submit" className="btn-primary">
+                            <Save className="w-4 h-4" /> Salvar
                         </button>
                     </div>
                 </div>
             </form>
 
-            {/* AI Processing Section - Only for uploaded videos */}
             {isUploadedVideo && (
-                <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-                    <h3 className="text-lg font-semibold text-gray-800 dark:text-white mb-4">
-                        Dados Gerados pela IA
+                <div className="pt-6 border-t border-ink-100">
+                    <h3 className="font-display text-lg font-semibold text-ink-900 mb-4">
+                        Dados gerados pela IA
                     </h3>
                     <VideoAIDataPanel videoId={initialData.video_id} />
                 </div>

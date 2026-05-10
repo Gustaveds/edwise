@@ -102,11 +102,19 @@ app.post('/api/login', async (req, res) => {
 
 app.get('/api/courses', authenticateToken, async (req, res) => {
     try {
-        let query = 'SELECT * FROM courses';
+        const baseWithCount = `
+            SELECT c.*, COALESCE(e.cnt, 0)::int AS student_count
+            FROM courses c
+            LEFT JOIN (
+                SELECT course_id, COUNT(*) AS cnt
+                FROM enrollments GROUP BY course_id
+            ) e ON e.course_id = c.id
+        `;
+        let query = baseWithCount;
         let params = [];
 
         if (req.user.role === 'professor') {
-            query += ' WHERE professor_id = $1';
+            query = `${baseWithCount} WHERE c.professor_id = $1`;
             params.push(req.user.id);
         } else if (req.user.role === 'student') {
             // Show enrolled courses
@@ -280,6 +288,124 @@ app.get('/api/courses/:id', authenticateToken, async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to fetch course details' });
+    }
+});
+
+// --- Enrollment Routes ---
+
+async function assertCourseManager(req, res, courseId) {
+    if (req.user.role === 'admin') return true;
+    if (req.user.role !== 'professor') {
+        res.sendStatus(403);
+        return false;
+    }
+    const owned = await db.query(
+        'SELECT 1 FROM courses WHERE id = $1 AND professor_id = $2',
+        [courseId, req.user.id]
+    );
+    if (owned.rows.length === 0) {
+        res.sendStatus(403);
+        return false;
+    }
+    return true;
+}
+
+app.get('/api/courses/:id/students', authenticateToken, async (req, res) => {
+    const courseId = req.params.id;
+    if (!await assertCourseManager(req, res, courseId)) return;
+
+    try {
+        const result = await db.query(`
+            SELECT u.id, u.name, u.email, e.enrolled_at
+            FROM enrollments e
+            JOIN users u ON u.id = e.student_id
+            WHERE e.course_id = $1
+            ORDER BY e.enrolled_at DESC
+        `, [courseId]);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error listing enrolled students:', err);
+        res.status(500).json({ error: 'Failed to list enrolled students' });
+    }
+});
+
+app.get('/api/students/search', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+    const q = (req.query.q || '').toString().trim();
+    const courseId = req.query.courseId;
+
+    try {
+        const params = [`%${q}%`];
+        let sql = `
+            SELECT id, name, email FROM users
+            WHERE role = 'student' AND (email ILIKE $1 OR name ILIKE $1)
+        `;
+        if (courseId) {
+            params.push(courseId);
+            sql += ` AND id NOT IN (SELECT student_id FROM enrollments WHERE course_id = $${params.length})`;
+        }
+        sql += ' ORDER BY email LIMIT 10';
+        const result = await db.query(sql, params);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error searching students:', err);
+        res.status(500).json({ error: 'Failed to search students' });
+    }
+});
+
+app.post('/api/courses/:id/students', authenticateToken, async (req, res) => {
+    const courseId = req.params.id;
+    if (!await assertCourseManager(req, res, courseId)) return;
+
+    const { email, studentId } = req.body;
+    if (!email && !studentId) {
+        return res.status(400).json({ error: 'email or studentId required' });
+    }
+
+    try {
+        const userQuery = studentId
+            ? await db.query("SELECT id, name, email FROM users WHERE id = $1 AND role = 'student'", [studentId])
+            : await db.query("SELECT id, name, email FROM users WHERE email = $1 AND role = 'student'", [email]);
+
+        if (userQuery.rows.length === 0) {
+            return res.status(404).json({ error: 'Student not found' });
+        }
+        const student = userQuery.rows[0];
+
+        const enroll = await db.query(`
+            INSERT INTO enrollments (student_id, course_id)
+            VALUES ($1, $2)
+            ON CONFLICT (student_id, course_id) DO NOTHING
+            RETURNING enrolled_at
+        `, [student.id, courseId]);
+
+        if (enroll.rows.length === 0) {
+            return res.status(409).json({ error: 'Student already enrolled' });
+        }
+
+        res.json({ ...student, enrolled_at: enroll.rows[0].enrolled_at });
+    } catch (err) {
+        console.error('Error enrolling student:', err);
+        res.status(500).json({ error: 'Failed to enroll student' });
+    }
+});
+
+app.delete('/api/courses/:id/students/:studentId', authenticateToken, async (req, res) => {
+    const { id: courseId, studentId } = req.params;
+    if (!await assertCourseManager(req, res, courseId)) return;
+
+    try {
+        const result = await db.query(
+            'DELETE FROM enrollments WHERE course_id = $1 AND student_id = $2 RETURNING id',
+            [courseId, studentId]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Enrollment not found' });
+        }
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error unenrolling student:', err);
+        res.status(500).json({ error: 'Failed to unenroll student' });
     }
 });
 

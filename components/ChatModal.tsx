@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, MessageSquare, Maximize2, Minimize2, History } from 'lucide-react';
+import { X, Maximize2, Minimize2, History, Sparkles } from 'lucide-react';
 import ChatAssistant from './ChatAssistant';
 import ChatHistorySidebar from './ChatHistorySidebar';
 import { Course, ChatMessage } from '../types';
@@ -18,87 +18,68 @@ const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, course, activeCo
     const [messages, setMessages] = useState<ChatMessage[]>([]);
 
     if (!isOpen) return null;
-
     const videoId = activeContent?.video_id;
 
-    const handleLoadChat = (loadedMessages: ChatMessage[]) => {
-        setMessages(loadedMessages);
-    };
-
-    const handleNewChat = () => {
-        setMessages([]);
-    };
-
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-            {/* Backdrop */}
-            <div
-                className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        <div className="fixed inset-0 z-50 grid place-items-center p-4 sm:p-6 animate-fade-in-up">
+            <button
+                type="button"
+                aria-label="Fechar"
                 onClick={onClose}
+                className="absolute inset-0 bg-ink-950/50 backdrop-blur-sm cursor-default"
             />
-
-            {/* Modal */}
             <div
-                className={`relative bg-gray-900 rounded-2xl shadow-2xl border border-gray-800 flex overflow-hidden transition-all duration-300 ${isMaximized
-                    ? 'w-full h-full max-w-full rounded-none'
-                    : 'w-full max-w-4xl h-[85vh] mx-4'
-                    }`}
+                onClick={(e) => e.stopPropagation()}
+                className={`relative glass flex overflow-hidden transition-all duration-300 ${
+                    isMaximized
+                        ? 'w-full h-[calc(100vh-32px)] max-w-none'
+                        : 'w-full max-w-4xl h-[85vh]'
+                }`}
             >
-                {/* History Sidebar */}
                 <ChatHistorySidebar
                     courseId={Number(course.id)}
                     isOpen={showHistory}
                     onClose={() => setShowHistory(false)}
-                    onLoadChat={handleLoadChat}
-                    onNewChat={handleNewChat}
+                    onLoadChat={setMessages}
+                    onNewChat={() => setMessages([])}
                 />
 
-                {/* Main Chat Area */}
-                <div className="flex-1 flex flex-col">
-                    {/* Header */}
-                    <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 bg-gray-900/95">
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 bg-blue-500/10 rounded-lg">
-                                <MessageSquare className="w-5 h-5 text-blue-400" />
+                <div className="flex-1 flex flex-col min-w-0">
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-ink-200 bg-white/70">
+                        <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-brand-50 grid place-items-center flex-shrink-0">
+                                <Sparkles className="w-4 h-4 text-brand-600" />
                             </div>
-                            <div>
-                                <h2 className="text-lg font-semibold text-white">Assistente IA</h2>
-                                <p className="text-sm text-gray-400">{course.title}</p>
+                            <div className="min-w-0">
+                                <h2 className="font-display font-semibold text-ink-900 truncate">Assistente IA</h2>
+                                <p className="text-xs text-ink-500 truncate">{course.title}</p>
                             </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1 flex-shrink-0">
                             <button
                                 onClick={() => setShowHistory(!showHistory)}
-                                className={`p-2 rounded-lg transition-colors ${showHistory
-                                    ? 'bg-blue-600 text-white'
-                                    : 'text-gray-400 hover:bg-gray-800 hover:text-white'
-                                    }`}
+                                className={`p-2 rounded-lg transition-colors ${showHistory ? 'bg-brand-50 text-brand-700' : 'text-ink-500 hover:bg-ink-100 hover:text-ink-900'}`}
                                 title="Histórico de conversas"
                             >
-                                <History className="w-5 h-5" />
+                                <History className="w-4 h-4" />
                             </button>
                             <button
                                 onClick={() => setIsMaximized(!isMaximized)}
-                                className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-400 hover:text-white"
-                                title={isMaximized ? "Minimizar" : "Maximizar"}
+                                className="p-2 rounded-lg text-ink-500 hover:bg-ink-100 hover:text-ink-900 transition-colors"
+                                title={isMaximized ? 'Minimizar' : 'Maximizar'}
                             >
-                                {isMaximized ? (
-                                    <Minimize2 className="w-5 h-5" />
-                                ) : (
-                                    <Maximize2 className="w-5 h-5" />
-                                )}
+                                {isMaximized ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                             </button>
                             <button
                                 onClick={onClose}
-                                className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-400 hover:text-white"
+                                className="p-2 rounded-lg text-ink-500 hover:bg-ink-100 hover:text-ink-900 transition-colors"
                                 aria-label="Fechar chat"
                             >
-                                <X className="w-5 h-5" />
+                                <X className="w-4 h-4" />
                             </button>
                         </div>
                     </div>
 
-                    {/* Chat Content */}
                     <div className="flex-1 overflow-hidden p-6">
                         <ChatAssistant
                             course={course}
@@ -109,9 +90,8 @@ const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, course, activeCo
                         />
                     </div>
 
-                    {/* Footer hint */}
-                    <div className="px-6 py-3 border-t border-gray-800 bg-gray-900/50">
-                        <p className="text-xs text-gray-500 text-center">
+                    <div className="px-6 py-3 border-t border-ink-200 bg-white/60">
+                        <p className="text-xs text-ink-500 text-center">
                             Faça perguntas sobre o curso e receba respostas baseadas no conteúdo
                         </p>
                     </div>

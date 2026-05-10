@@ -62,6 +62,14 @@ export interface Course {
     thumbnail: string;
     materials: Material[]; // Legacy support, prefer modules structure
     modules?: Module[];
+    student_count?: number;
+}
+
+export interface EnrolledStudent {
+    id: number;
+    name: string;
+    email: string;
+    enrolled_at?: string;
 }
 
 export interface Module {

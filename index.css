@@ -1,3 +1,168 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ──────────────────────────────────────────────────────────────────────── */
+/*  EdWise Design Tokens                                                    */
+/*  Light-first, calm, education-friendly. Orange = brand. Slate = ink.     */
+/* ──────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+    :root {
+        --color-brand: 249 115 22;          /* orange-500 */
+        --color-brand-strong: 234 88 12;    /* orange-600 */
+        --color-brand-soft: 255 247 237;    /* orange-50 */
+
+        --color-bg: 248 250 252;            /* slate-50 — page surface */
+        --color-surface: 255 255 255;       /* card surface */
+        --color-surface-muted: 241 245 249; /* slate-100 */
+        --color-border: 226 232 240;        /* slate-200 */
+
+        --color-ink: 15 23 42;              /* slate-900 — primary text */
+        --color-ink-muted: 71 85 105;       /* slate-600 */
+        --color-ink-faint: 148 163 184;     /* slate-400 */
+
+        --color-success: 16 185 129;
+        --color-info:    37 99 235;
+        --color-warning: 245 158 11;
+        --color-danger:  239 68 68;
+
+        --radius-card: 1rem;
+        --radius-modal: 1.5rem;
+
+        --shadow-card: 0 1px 2px rgba(15,23,42,0.04), 0 1px 3px rgba(15,23,42,0.06);
+    }
+
+    .dark {
+        --color-bg: 15 23 42;
+        --color-surface: 30 41 59;
+        --color-surface-muted: 51 65 85;
+        --color-border: 51 65 85;
+
+        --color-ink: 248 250 252;
+        --color-ink-muted: 203 213 225;
+        --color-ink-faint: 100 116 139;
+    }
+
+    html, body {
+        font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+        font-feature-settings: 'cv11', 'ss01';
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        text-rendering: optimizeLegibility;
+    }
+
+    body {
+        background-color: rgb(var(--color-bg));
+        color: rgb(var(--color-ink));
+    }
+
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Manrope', 'Inter', system-ui, sans-serif;
+        letter-spacing: -0.015em;
+    }
+
+    ::selection {
+        background-color: rgb(var(--color-brand) / 0.20);
+        color: rgb(var(--color-brand-strong));
+    }
+
+    /* Slim, branded scrollbars (only inside scrollable surfaces) */
+    .ds-scroll {
+        scrollbar-width: thin;
+        scrollbar-color: rgb(var(--color-ink-faint) / 0.5) transparent;
+    }
+    .ds-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+    .ds-scroll::-webkit-scrollbar-track { background: transparent; }
+    .ds-scroll::-webkit-scrollbar-thumb {
+        background: rgb(var(--color-ink-faint) / 0.4);
+        border-radius: 9999px;
+    }
+    .ds-scroll::-webkit-scrollbar-thumb:hover {
+        background: rgb(var(--color-ink-faint) / 0.7);
+    }
+}
+
+@layer components {
+    /* ─── Buttons ─────────────────────────────────────────────────────── */
+    .btn {
+        @apply inline-flex items-center justify-center gap-2 rounded-pill px-5 py-2.5
+               text-sm font-medium transition-all duration-200 ease-soft
+               disabled:opacity-50 disabled:cursor-not-allowed
+               focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40
+               focus-visible:ring-offset-2 focus-visible:ring-offset-white;
+    }
+    .btn-primary {
+        @apply btn bg-gradient-to-b from-brand-400 to-brand-600 text-white
+               shadow-glow-brand hover:brightness-105 active:brightness-95;
+    }
+    .btn-secondary {
+        @apply btn bg-white text-ink-800 border border-ink-200
+               hover:bg-ink-50 hover:border-ink-300;
+    }
+    .btn-ghost {
+        @apply btn text-ink-600 hover:text-ink-900 hover:bg-ink-100;
+    }
+    .btn-danger-ghost {
+        @apply btn text-red-600 hover:bg-red-50;
+    }
+
+    /* ─── Surfaces ────────────────────────────────────────────────────── */
+    .surface {
+        @apply bg-white rounded-card border border-ink-200 shadow-card;
+    }
+    .surface-muted {
+        @apply bg-ink-50 rounded-card border border-ink-200;
+    }
+    .glass {
+        @apply bg-white/80 backdrop-blur-md border border-white/60 shadow-modal rounded-modal;
+    }
+
+    /* ─── Inputs ──────────────────────────────────────────────────────── */
+    .input {
+        @apply w-full rounded-xl border border-ink-200 bg-white px-4 py-2.5
+               text-sm text-ink-900 placeholder:text-ink-400
+               focus:outline-none focus:ring-2 focus:ring-brand-500/30
+               focus:border-brand-400 transition-colors;
+    }
+    .label {
+        @apply block text-xs font-semibold uppercase tracking-wider text-ink-500 mb-2 font-mono;
+    }
+
+    /* ─── Chips / Badges ──────────────────────────────────────────────── */
+    .chip {
+        @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-pill
+               text-xs font-medium bg-ink-100 text-ink-700;
+    }
+    .chip-brand {
+        @apply chip bg-brand-50 text-brand-700;
+    }
+
+    /* ─── Stepper item ────────────────────────────────────────────────── */
+    .step {
+        @apply flex items-center gap-2 text-sm font-medium text-ink-400 transition-colors;
+    }
+    .step-active {
+        @apply text-brand-600;
+    }
+    .step-done {
+        @apply text-ink-700;
+    }
+    .step-bullet {
+        @apply w-6 h-6 rounded-full grid place-items-center text-xs font-semibold
+               border border-ink-200 bg-white text-ink-400;
+    }
+    .step-active .step-bullet {
+        @apply border-brand-500 bg-brand-500 text-white shadow-glow-brand;
+    }
+    .step-done .step-bullet {
+        @apply border-brand-200 bg-brand-50 text-brand-600;
+    }
+}
+
+/* Hide native textarea/input number arrows for cleaner forms */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}

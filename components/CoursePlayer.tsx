@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Play, CheckCircle, FileText, MessageSquare, Info, Edit3, ChevronRight, Menu, Sparkles, Brain, ListChecks, Trash2 } from 'lucide-react';
+import { ArrowLeft, Play, FileText, MessageSquare, Info, Edit3, Menu, Sparkles, Brain, ListChecks, Trash2, ChevronRight } from 'lucide-react';
 import { Course, MaterialType, QuizQuestion } from '../types';
 import ChatModal from './ChatModal';
 import VideoAIDisplay from './VideoAIDisplay';
@@ -7,6 +7,8 @@ import FlashcardsModal from './FlashcardsModal';
 import QuizModal from './QuizModal';
 import { useAuth } from '../contexts/AuthContext';
 import { fetchGeneratedQuizzes, deleteGeneratedQuiz } from '../services/quizService';
+import { useDialog } from './ui/ConfirmDialog';
+import { useToast } from './ui/Toast';
 import config from '../config';
 
 interface CoursePlayerProps {
@@ -16,6 +18,8 @@ interface CoursePlayerProps {
 
 const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
     const { user } = useAuth();
+    const { confirm } = useDialog();
+    const toast = useToast();
     const [activeModuleId, setActiveModuleId] = useState<string | number | null>(null);
     const [activeContent, setActiveContent] = useState<any>(null);
     const [activeTab, setActiveTab] = useState<'info' | 'aidata' | 'comments' | 'notes' | 'flashcards' | 'quizzes'>('info');
@@ -30,10 +34,9 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
     const [isSavingNote, setIsSavingNote] = useState(false);
     const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
-    // Fetch note on content change
     React.useEffect(() => {
         if (activeContent?.id) {
-            setNoteText(''); // Clear previous note while loading
+            setNoteText('');
             fetch(`${config.API_URL}/api/notes?content_id=${activeContent.id}`, {
                 headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
             })
@@ -47,18 +50,13 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
         const newText = e.target.value;
         setNoteText(newText);
         setIsSavingNote(true);
-
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-
         saveTimeoutRef.current = setTimeout(async () => {
             if (!activeContent?.id) return;
             try {
                 await fetch(`${config.API_URL}/api/notes`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${localStorage.getItem('token')}`
-                    },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
                     body: JSON.stringify({ content_id: activeContent.id, note: newText })
                 });
                 setIsSavingNote(false);
@@ -66,21 +64,17 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                 console.error('Error saving note:', err);
                 setIsSavingNote(false);
             }
-        }, 1000); // 1 second debounce
+        }, 1000);
     };
 
     const isProfessor = user?.role === 'professor' || user?.role === 'admin';
 
-    // Mock data structure if not present in course (adapter)
-    const modules = course.modules || [
-        {
-            id: 1,
-            title: 'Módulo 1: Introdução',
-            contents: course.materials?.map(m => ({ ...m, type: m.type === MaterialType.Video ? 'video' : 'pdf' })) || []
-        }
-    ];
+    const modules = course.modules || [{
+        id: 1,
+        title: 'Módulo 1: Introdução',
+        contents: course.materials?.map(m => ({ ...m, type: m.type === MaterialType.Video ? 'video' : 'pdf' })) || []
+    }];
 
-    // Set initial content
     React.useEffect(() => {
         if (modules.length > 0 && modules[0].contents && modules[0].contents.length > 0 && !activeContent) {
             setActiveContent(modules[0].contents[0]);
@@ -88,11 +82,8 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
         }
     }, [modules]);
 
-    // Fetch quizzes when quizzes tab is active
     useEffect(() => {
-        if (activeTab === 'quizzes') {
-            loadQuizzes();
-        }
+        if (activeTab === 'quizzes') loadQuizzes();
     }, [activeTab, course.id]);
 
     const loadQuizzes = async () => {
@@ -102,9 +93,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
 
     const handleOpenQuiz = (quiz: any) => {
         try {
-            const questions = typeof quiz.questions === 'string'
-                ? JSON.parse(quiz.questions)
-                : quiz.questions;
+            const questions = typeof quiz.questions === 'string' ? JSON.parse(quiz.questions) : quiz.questions;
             setSelectedQuiz(questions);
             setIsQuizModalOpen(true);
         } catch (error) {
@@ -113,15 +102,21 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
     };
 
     const handleDeleteQuiz = async (quizId: number) => {
-        if (confirm('Tem certeza que deseja deletar este quiz?')) {
-            await deleteGeneratedQuiz(quizId);
-            loadQuizzes();
-        }
+        const ok = await confirm({
+            title: 'Deletar este quiz?',
+            message: 'Esta ação não pode ser desfeita.',
+            confirmLabel: 'Deletar',
+            tone: 'danger',
+        });
+        if (!ok) return;
+        await deleteGeneratedQuiz(quizId);
+        loadQuizzes();
+        toast.success('Quiz deletado');
     };
 
     const handleQuizComplete = (results: any) => {
         const correct = results.filter((r: any) => r.isCorrect).length;
-        alert(`Quiz concluído! Você acertou ${correct} de ${results.length} questões.`);
+        toast.success('Quiz concluído!', `Você acertou ${correct} de ${results.length} questões.`);
         setIsQuizModalOpen(false);
     };
 
@@ -132,74 +127,84 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
 
     const videoRef = React.useRef<HTMLVideoElement>(null);
 
-    // Helper to parse time string (e.g., "00m34s", "1h20m", "90s") to seconds
     const parseTime = (timeStr: string): number | null => {
         if (!timeStr) return null;
-
         let totalSeconds = 0;
-
-        const hoursMatch = timeStr.match(/(\d+)h/);
+        const hoursMatch   = timeStr.match(/(\d+)h/);
         const minutesMatch = timeStr.match(/(\d+)m/);
         const secondsMatch = timeStr.match(/(\d+)s/);
-
-        if (hoursMatch) totalSeconds += parseInt(hoursMatch[1]) * 3600;
+        if (hoursMatch)   totalSeconds += parseInt(hoursMatch[1]) * 3600;
         if (minutesMatch) totalSeconds += parseInt(minutesMatch[1]) * 60;
         if (secondsMatch) totalSeconds += parseInt(secondsMatch[1]);
-
-        // Fallback for simple numbers (seconds)
         if (!hoursMatch && !minutesMatch && !secondsMatch && !isNaN(Number(timeStr))) {
             totalSeconds = Number(timeStr);
         }
-
         return totalSeconds > 0 ? totalSeconds : null;
     };
 
-    // Listen for URL hash changes to seek video
     React.useEffect(() => {
         const handleHashChange = () => {
             const hash = window.location.hash;
             if (hash && hash.includes('&t=')) {
                 const timeParam = hash.split('&t=')[1];
                 const seconds = parseTime(timeParam);
-
                 if (seconds !== null && videoRef.current) {
                     videoRef.current.currentTime = seconds;
                     videoRef.current.play().catch(e => console.log('Auto-play prevented:', e));
                 }
             }
         };
-
-        // Check on mount and add listener
         handleHashChange();
         window.addEventListener('hashchange', handleHashChange);
-
-        return () => {
-            window.removeEventListener('hashchange', handleHashChange);
-        };
+        return () => window.removeEventListener('hashchange', handleHashChange);
     }, [activeContent]);
 
+    const tab = (key: typeof activeTab, label: string, Icon: any) => (
+        <button
+            onClick={() => setActiveTab(key)}
+            className={`px-5 py-3 inline-flex items-center gap-2 text-sm font-medium transition-colors border-b-2 whitespace-nowrap
+                ${activeTab === key
+                    ? 'text-brand-600 border-brand-500'
+                    : 'text-ink-500 hover:text-ink-900 border-transparent'}`}
+        >
+            <Icon className="w-4 h-4" />
+            {label}
+        </button>
+    );
+
     return (
-        <div className="flex h-screen bg-black text-white overflow-hidden">
-            {/* Main Player Area */}
-            <div className="flex-1 flex flex-col relative">
-                {/* Header Overlay */}
-                <div className="absolute top-0 left-0 right-0 p-4 z-10 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent">
-                    <button onClick={onBack} className="flex items-center text-white/80 hover:text-white transition-colors">
-                        <ArrowLeft className="w-5 h-5 mr-2" />
-                        Voltar para Cursos
+        <div className="-mx-4 sm:-mx-6 lg:-mx-8 -my-8 min-h-[calc(100vh-1px)] bg-ink-50">
+            {/* Top header bar */}
+            <header className="sticky top-0 z-20 bg-white/85 backdrop-blur-md border-b border-ink-200">
+                <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-4">
+                    <button onClick={onBack} className="btn-ghost !px-3">
+                        <ArrowLeft className="w-4 h-4" /> Voltar para cursos
                     </button>
-                    <button onClick={() => setShowSidebar(!showSidebar)} className="md:hidden text-white">
-                        <Menu className="w-6 h-6" />
+                    <div className="hidden sm:block w-px h-6 bg-ink-200" />
+                    <div className="min-w-0 flex-1">
+                        <p className="text-xs font-mono uppercase tracking-wider text-ink-500">Aula</p>
+                        <h1 className="font-display font-semibold text-base text-ink-900 truncate">
+                            {activeContent?.title || course.title}
+                        </h1>
+                    </div>
+                    <button
+                        onClick={() => setShowSidebar(!showSidebar)}
+                        className="md:hidden btn-secondary !px-3"
+                        aria-label="Abrir conteúdo do curso"
+                    >
+                        <Menu className="w-4 h-4" />
                     </button>
                 </div>
+            </header>
 
-                {/* Video/Content Container */}
-                <div className="flex-1 bg-gray-900 flex items-center justify-center relative">
-                    {activeContent ? (
-                        activeContent.type === 'video' ? (
-                            <div className="w-full h-full bg-black">
-                                {activeContent.video_id ? (
-                                    // Uploaded video - stream from backend
+            <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-6 items-start">
+                {/* Left: video + tabs */}
+                <div className="surface overflow-hidden flex flex-col">
+                    {/* Video / content container */}
+                    <div className="bg-ink-950 grid place-items-center aspect-video relative overflow-hidden">
+                        {activeContent ? (
+                            activeContent.type === 'video' ? (
+                                activeContent.video_id ? (
                                     <video
                                         ref={videoRef}
                                         className="w-full h-full"
@@ -210,7 +215,6 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                                         Seu navegador não suporta a tag de vídeo.
                                     </video>
                                 ) : activeContent.content ? (
-                                    // External video (YouTube, Vimeo, etc)
                                     <iframe
                                         className="w-full h-full"
                                         src={activeContent.content}
@@ -220,210 +224,194 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                                         allowFullScreen
                                     />
                                 ) : (
-                                    <div className="text-center">
-                                        <Play className="w-20 h-20 text-white/20 mx-auto mb-4" />
-                                        <p className="text-gray-400">Vídeo não disponível</p>
-                                        <p className="text-xs text-gray-600 mt-2">Verifique se o vídeo foi carregado corretamente</p>
+                                    <div className="text-center text-ink-300">
+                                        <Play className="w-16 h-16 mx-auto mb-3 opacity-30" />
+                                        <p className="text-sm">Vídeo não disponível</p>
                                     </div>
-                                )}
-                            </div>
-                        ) : (
-                            <div className="w-full h-full p-8 overflow-y-auto bg-white text-gray-900">
-                                <h2 className="text-2xl font-bold mb-4">{activeContent.title}</h2>
-                                <div className="prose max-w-none">
-                                    {activeContent.content}
+                                )
+                            ) : (
+                                <div className="w-full h-full bg-white text-ink-900 p-8 overflow-y-auto ds-scroll">
+                                    <h2 className="font-display text-2xl font-semibold mb-4">{activeContent.title}</h2>
+                                    <div className="prose max-w-none">{activeContent.content}</div>
                                 </div>
-                            </div>
-                        )
-                    ) : (
-                        <p className="text-gray-500">Selecione uma aula para começar</p>
-                    )}
-                </div>
-
-                {/* Bottom Tabs Area */}
-                <div className="h-1/3 bg-gray-900 border-t border-gray-800 flex flex-col">
-                    <div className="flex border-b border-gray-800">
-                        <button
-                            onClick={() => setActiveTab('info')}
-                            className={`px-6 py-3 flex items-center text-sm font-medium transition-colors ${activeTab === 'info' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'}`}
-                        >
-                            <Info className="w-4 h-4 mr-2" />
-                            Informações
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('comments')}
-                            className={`px-6 py-3 flex items-center text-sm font-medium transition-colors ${activeTab === 'comments' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'}`}
-                        >
-                            <MessageSquare className="w-4 h-4 mr-2" />
-                            Comentários
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('notes')}
-                            className={`px-6 py-3 flex items-center text-sm font-medium transition-colors ${activeTab === 'notes' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'}`}
-                        >
-                            <Edit3 className="w-4 h-4 mr-2" />
-                            Anotações
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('flashcards')}
-                            className={`px-6 py-3 flex items-center text-sm font-medium transition-colors ${activeTab === 'flashcards' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'}`}
-                        >
-                            <Brain className="w-4 h-4 mr-2" />
-                            Flashcards
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('quizzes')}
-                            className={`px-6 py-3 flex items-center text-sm font-medium transition-colors ${activeTab === 'quizzes' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'}`}
-                        >
-                            <ListChecks className="w-4 h-4 mr-2" />
-                            Quizzes
-                        </button>
-                        {isProfessor && activeContent?.video_id && (
-                            <button
-                                onClick={() => setActiveTab('aidata')}
-                                className={`px-6 py-3 flex items-center text-sm font-medium transition-colors ${activeTab === 'aidata' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'}`}
-                            >
-                                <Sparkles className="w-4 h-4 mr-2" />
-                                Dados IA
-                            </button>
+                            )
+                        ) : (
+                            <p className="text-ink-300 text-sm">Selecione uma aula para começar</p>
                         )}
                     </div>
-                    <div className="flex-1 p-6 overflow-y-auto">
+
+                    {/* Bottom tabs */}
+                    <div className="border-t border-ink-200 flex border-b border-ink-200 px-2 overflow-x-auto ds-scroll">
+                        {tab('info',       'Informações', Info)}
+                        {tab('comments',   'Comentários', MessageSquare)}
+                        {tab('notes',      'Anotações',   Edit3)}
+                        {tab('flashcards', 'Flashcards',  Brain)}
+                        {tab('quizzes',    'Quizzes',     ListChecks)}
+                        {isProfessor && activeContent?.video_id && tab('aidata', 'Dados IA', Sparkles)}
+                    </div>
+
+                    <div className="p-6 min-h-[260px]">
                         {activeTab === 'info' && (
                             <div>
-                                <h1 className="text-2xl font-bold mb-2">{activeContent?.title || course.title}</h1>
-                                <p className="text-gray-400 mb-4">{course.description}</p>
+                                <h2 className="font-display text-2xl font-semibold text-ink-900 mb-2">
+                                    {activeContent?.title || course.title}
+                                </h2>
+                                <p className="text-ink-600 text-sm">{course.description}</p>
                                 {activeContent?.description && (
-                                    <div className="mt-4">
-                                        <h3 className="text-sm font-semibold text-gray-400 mb-2">Sobre esta aula</h3>
-                                        <p className="text-gray-300">{activeContent.description}</p>
+                                    <div className="mt-5">
+                                        <p className="text-xs font-mono uppercase tracking-wider text-ink-500 mb-2">Sobre esta aula</p>
+                                        <p className="text-ink-700">{activeContent.description}</p>
                                     </div>
                                 )}
                             </div>
                         )}
+
                         {activeTab === 'comments' && (
-                            <div className="text-center text-gray-500 mt-10">
-                                <MessageSquare className="w-10 h-10 mx-auto mb-2 opacity-20" />
+                            <div className="text-center text-ink-500 py-10">
+                                <MessageSquare className="w-10 h-10 mx-auto mb-2 opacity-30" />
                                 <p>Nenhum comentário ainda.</p>
                             </div>
                         )}
+
                         {activeTab === 'notes' && (
-                            <div className="relative h-full">
+                            <div className="relative">
                                 <textarea
-                                    className="w-full h-full bg-gray-800 text-white p-4 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 outline-none text-gray-900"
+                                    className="w-full min-h-[220px] input resize-y text-sm"
                                     placeholder="Faça suas anotações aqui..."
                                     value={noteText}
                                     onChange={handleNoteChange}
                                 />
-                                {isSavingNote && (
-                                    <div className="absolute bottom-4 right-4 text-xs text-gray-400 flex items-center bg-gray-900/80 px-2 py-1 rounded">
-                                        <div className="w-2 h-2 bg-yellow-500 rounded-full mr-2 animate-pulse"></div>
-                                        Salvando...
-                                    </div>
-                                )}
-                                {!isSavingNote && noteText && (
-                                    <div className="absolute bottom-4 right-4 text-xs text-gray-400 flex items-center bg-gray-900/80 px-2 py-1 rounded">
-                                        <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                                        Salvo
+                                {(isSavingNote || noteText) && (
+                                    <div className="absolute bottom-3 right-3 text-xs text-ink-600 flex items-center gap-1.5 bg-white/80 backdrop-blur-sm px-2 py-1 rounded-pill ring-1 ring-ink-200">
+                                        <span className={`w-1.5 h-1.5 rounded-full ${isSavingNote ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`} />
+                                        {isSavingNote ? 'Salvando...' : 'Salvo'}
                                     </div>
                                 )}
                             </div>
                         )}
+
                         {activeTab === 'flashcards' && (
-                            <div className="text-center text-gray-400 mt-10">
-                                <Brain className="w-16 h-16 mx-auto mb-4 opacity-20" />
-                                <p className="mb-4">Flashcards salvos deste curso</p>
-                                <button
-                                    onClick={() => setIsFlashcardsModalOpen(true)}
-                                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-                                >
-                                    Ver Flashcards
+                            <div className="text-center text-ink-500 py-10">
+                                <div className="w-12 h-12 mx-auto rounded-2xl bg-brand-50 grid place-items-center mb-4">
+                                    <Brain className="w-5 h-5 text-brand-600" />
+                                </div>
+                                <p className="mb-4 text-sm">Flashcards salvos deste curso</p>
+                                <button onClick={() => setIsFlashcardsModalOpen(true)} className="btn-primary">
+                                    Ver flashcards
                                 </button>
                             </div>
                         )}
+
                         {activeTab === 'quizzes' && (
-                            <div className="p-6">
+                            <div>
                                 {generatedQuizzes.length > 0 ? (
-                                    <div className="space-y-4">
-                                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-                                            Quizzes Gerados ({generatedQuizzes.length})
+                                    <div className="space-y-3">
+                                        <h3 className="font-display text-lg font-semibold text-ink-900 mb-3">
+                                            Quizzes gerados ({generatedQuizzes.length})
                                         </h3>
                                         {generatedQuizzes.map((quiz) => (
-                                            <div
-                                                key={quiz.id}
-                                                className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:shadow-md transition-shadow"
-                                            >
-                                                <div className="flex items-start justify-between">
-                                                    <div className="flex-1">
-                                                        <h4 className="font-medium text-gray-900 dark:text-white mb-1">
-                                                            {quiz.title}
-                                                        </h4>
-                                                        <p className="text-sm text-gray-500 dark:text-gray-400">
-                                                            {typeof quiz.questions === 'string'
-                                                                ? JSON.parse(quiz.questions).length
-                                                                : quiz.questions?.length || 0} perguntas
-                                                        </p>
-                                                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                                                            {new Date(quiz.created_at).toLocaleString('pt-BR')}
-                                                        </p>
-                                                    </div>
-                                                    <div className="flex gap-2">
-                                                        <button
-                                                            onClick={() => handleOpenQuiz(quiz)}
-                                                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
-                                                        >
-                                                            Abrir Quiz
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleDeleteQuiz(quiz.id)}
-                                                            className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                                                            title="Deletar quiz"
-                                                        >
-                                                            <Trash2 className="w-5 h-5" />
-                                                        </button>
-                                                    </div>
+                                            <div key={quiz.id} className="rounded-xl ring-1 ring-ink-200 bg-white p-4 flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <h4 className="font-medium text-ink-900 mb-1 truncate">{quiz.title}</h4>
+                                                    <p className="text-xs text-ink-500">
+                                                        {(typeof quiz.questions === 'string' ? JSON.parse(quiz.questions) : quiz.questions || []).length} perguntas
+                                                    </p>
+                                                    <p className="text-[11px] font-mono text-ink-400 mt-1">
+                                                        {new Date(quiz.created_at).toLocaleString('pt-BR')}
+                                                    </p>
+                                                </div>
+                                                <div className="flex items-center gap-2 flex-shrink-0">
+                                                    <button onClick={() => handleOpenQuiz(quiz)} className="btn-primary !py-1.5 !px-3 text-xs">
+                                                        Abrir
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleDeleteQuiz(quiz.id)}
+                                                        className="p-2 text-ink-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                        title="Deletar quiz"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
                                                 </div>
                                             </div>
                                         ))}
                                     </div>
                                 ) : (
-                                    <div className="text-center text-gray-400 mt-10">
-                                        <ListChecks className="w-16 h-16 mx-auto mb-4 opacity-20" />
-                                        <p className="mb-4">Gere quizzes usando o Assistente IA</p>
-                                        <button
-                                            onClick={() => setIsChatModalOpen(true)}
-                                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-                                        >
-                                            Abrir Assistente IA
+                                    <div className="text-center text-ink-500 py-10">
+                                        <div className="w-12 h-12 mx-auto rounded-2xl bg-emerald-50 grid place-items-center mb-4">
+                                            <ListChecks className="w-5 h-5 text-emerald-600" />
+                                        </div>
+                                        <p className="mb-4 text-sm">Gere quizzes usando o assistente IA</p>
+                                        <button onClick={() => setIsChatModalOpen(true)} className="btn-primary">
+                                            Abrir assistente
                                         </button>
                                     </div>
                                 )}
                             </div>
                         )}
+
                         {activeTab === 'aidata' && activeContent?.video_id && (
-                            <VideoAIDisplay
-                                videoId={activeContent.video_id}
-                                isOwner={isProfessor}
-                            />
+                            <VideoAIDisplay videoId={activeContent.video_id} isOwner={isProfessor} />
                         )}
                     </div>
                 </div>
+
+                {/* Right: course timeline */}
+                <aside className={`surface flex flex-col self-start ${showSidebar ? '' : 'hidden lg:flex'}`}>
+                    <div className="p-5 border-b border-ink-200">
+                        <h3 className="font-display font-semibold text-base text-ink-900">Conteúdo do curso</h3>
+                        <div className="w-full bg-ink-100 h-1.5 rounded-full mt-3 overflow-hidden">
+                            <div className="bg-brand-gradient h-full w-1/3" />
+                        </div>
+                        <p className="text-[11px] font-mono text-ink-500 mt-1.5">33% Concluído</p>
+                    </div>
+                    <div className="max-h-[600px] overflow-y-auto ds-scroll">
+                        {modules.map((module: any) => (
+                            <div key={module.id} className="border-b border-ink-100 last:border-0">
+                                <div className="px-4 py-2.5 bg-ink-50 text-[11px] font-mono uppercase tracking-wider text-ink-500">
+                                    {module.title}
+                                </div>
+                                <div>
+                                    {module.contents?.map((content: any) => {
+                                        const active = activeContent?.id === content.id;
+                                        return (
+                                            <button
+                                                key={content.id}
+                                                onClick={() => handleContentSelect(content, module.id)}
+                                                className={`w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-ink-50/60 transition-colors border-l-2
+                                                    ${active ? 'bg-brand-50/60 border-brand-500' : 'border-transparent'}`}
+                                            >
+                                                <div className="mt-0.5 flex-shrink-0">
+                                                    {content.type === 'video'
+                                                        ? <Play className={`w-4 h-4 ${active ? 'text-brand-600' : 'text-ink-400'}`} />
+                                                        : <FileText className={`w-4 h-4 ${active ? 'text-brand-600' : 'text-ink-400'}`} />}
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className={`text-sm truncate ${active ? 'text-brand-700 font-semibold' : 'text-ink-800'}`}>
+                                                        {content.title}
+                                                    </p>
+                                                    <p className="text-[11px] font-mono text-ink-400 mt-0.5">10 min</p>
+                                                </div>
+                                                {active && <ChevronRight className="w-4 h-4 text-brand-500 flex-shrink-0 mt-0.5" />}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </aside>
             </div>
 
             {/* Floating Chat Button */}
             <button
                 onClick={() => setIsChatModalOpen(true)}
-                className="fixed bottom-6 right-6 p-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-2xl transition-all hover:scale-110 active:scale-95 z-40 flex items-center gap-2 group"
+                className="fixed bottom-6 right-6 inline-flex items-center gap-2 px-4 py-3 rounded-pill bg-gradient-to-b from-brand-400 to-brand-600 text-white shadow-glow-brand z-40 hover:brightness-105 active:brightness-95 transition-all"
                 aria-label="Abrir assistente IA"
             >
-                <MessageSquare className="w-6 h-6" />
-                <span className="max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-300 whitespace-nowrap font-medium">
-                    Assistente IA
-                </span>
+                <Sparkles className="w-4 h-4" />
+                <span className="font-medium text-sm">Assistente IA</span>
             </button>
 
-
-            {/* Chat Modal */}
             <ChatModal
                 isOpen={isChatModalOpen}
                 onClose={() => setIsChatModalOpen(false)}
@@ -432,14 +420,12 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                 onQuizSaved={loadQuizzes}
             />
 
-            {/* Flashcards Modal */}
             <FlashcardsModal
                 courseId={course.id}
                 isOpen={isFlashcardsModalOpen}
                 onClose={() => setIsFlashcardsModalOpen(false)}
             />
 
-            {/* Quiz Modal */}
             {selectedQuiz && (
                 <QuizModal
                     isOpen={isQuizModalOpen}
@@ -449,45 +435,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                     courseName={course.title}
                 />
             )}
-
-            {/* Sidebar Timeline */}
-            <div className={`w-80 bg-gray-900 border-l border-gray-800 flex flex-col transition-all duration-300 ${showSidebar ? 'translate-x-0' : 'translate-x-full hidden md:flex'}`}>
-                <div className="p-4 border-b border-gray-800">
-                    <h3 className="font-bold text-lg">Conteúdo do Curso</h3>
-                    <div className="w-full bg-gray-800 h-2 rounded-full mt-3 overflow-hidden">
-                        <div className="bg-green-500 h-full w-1/3"></div>
-                    </div>
-                    <p className="text-xs text-gray-400 mt-1">33% Concluído</p>
-                </div>
-                <div className="flex-1 overflow-y-auto">
-                    {modules.map((module: any) => (
-                        <div key={module.id} className="border-b border-gray-800/50">
-                            <div className="px-4 py-3 bg-gray-800/30 font-medium text-sm text-gray-300">
-                                {module.title}
-                            </div>
-                            <div>
-                                {module.contents?.map((content: any) => (
-                                    <button
-                                        key={content.id}
-                                        onClick={() => handleContentSelect(content, module.id)}
-                                        className={`w-full text-left px-4 py-3 flex items-start hover:bg-gray-800 transition-colors ${activeContent?.id === content.id ? 'bg-gray-800 border-l-4 border-blue-500' : 'border-l-4 border-transparent'}`}
-                                    >
-                                        <div className="mt-1 mr-3">
-                                            {content.type === 'video' ? <Play className="w-4 h-4 text-gray-400" /> : <FileText className="w-4 h-4 text-gray-400" />}
-                                        </div>
-                                        <div className="flex-1">
-                                            <p className={`text-sm ${activeContent?.id === content.id ? 'text-white font-medium' : 'text-gray-400'}`}>{content.title}</p>
-                                            <p className="text-xs text-gray-600 mt-0.5">10 min</p>
-                                        </div>
-                                        {/* <CheckCircle className="w-4 h-4 text-green-500 ml-2" /> */}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        </div >
+        </div>
     );
 };
 

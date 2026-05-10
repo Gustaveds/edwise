@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import Sidebar from './Sidebar';
 import { UserRole } from '../types';
 
@@ -13,6 +13,8 @@ interface LayoutProps {
     fullScreen?: boolean;
 }
 
+const COLLAPSE_KEY = 'edwise.sidebar.collapsed';
+
 const Layout: React.FC<LayoutProps> = ({
     children,
     userRole,
@@ -21,14 +23,26 @@ const Layout: React.FC<LayoutProps> = ({
     onNavigate,
     onLogout,
     onImpersonate,
-    fullScreen = false
+    fullScreen = false,
 }) => {
+    const [collapsed, setCollapsed] = useState<boolean>(() => {
+        try { return localStorage.getItem(COLLAPSE_KEY) === '1'; } catch { return false; }
+    });
+
+    const toggleCollapse = () => {
+        setCollapsed(prev => {
+            const next = !prev;
+            try { localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0'); } catch {}
+            return next;
+        });
+    };
+
     if (fullScreen) {
-        return <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">{children}</div>;
+        return <div className="min-h-screen bg-ink-50 text-ink-900">{children}</div>;
     }
 
     return (
-        <div className="flex h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 overflow-hidden">
+        <div className="flex h-screen bg-ink-50 text-ink-900 overflow-hidden">
             <Sidebar
                 userRole={userRole}
                 realUserRole={realUserRole}
@@ -36,8 +50,10 @@ const Layout: React.FC<LayoutProps> = ({
                 onNavigate={onNavigate}
                 onLogout={onLogout}
                 onImpersonate={onImpersonate}
+                isCollapsed={collapsed}
+                onToggleCollapse={toggleCollapse}
             />
-            <main className="flex-1 overflow-y-auto relative">
+            <main className="flex-1 overflow-y-auto ds-scroll relative">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                     {children}
                 </div>
