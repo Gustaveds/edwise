@@ -222,40 +222,61 @@ async function processVideoWithAI(videoId, updateStage = null) {
             console.log(`[VIDEO-AI] [${videoId}] ⚠️  No embedded SRT found in video file`);
             console.log(`[VIDEO-AI] [${videoId}] 🎤 Using Whisper for audio transcription (this may take several minutes)...`);
 
-            // Extract audio first
+            // Check if video has audio stream before attempting extraction
             const audioPath = videoPath.replace('.mp4', '.mp3');
-            console.log(`[VIDEO-AI] [${videoId}] 🔊 Extracting audio from video...`);
             const fs = await import('fs');
             const { createRequire } = await import('module');
             const require = createRequire(import.meta.url);
-            await new Promise((resolve, reject) => {
-                const ffmpeg = require('fluent-ffmpeg');
-                const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-                ffmpeg.setFfmpegPath(ffmpegInstaller.path);
-                ffmpeg(videoPath)
-                    .output(audioPath)
-                    .audioCodec('libmp3lame')
-                    .on('end', () => {
-                        const stats = fs.statSync(audioPath);
-                        const audioSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
-                        console.log(`[VIDEO-AI] [${videoId}] ✅ Audio extracted: ${audioSizeMB}MB`);
-                        resolve();
-                    })
-                    .on('error', reject)
-                    .run();
-            });
+            const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+            const ffprobePath = ffmpegInstaller.path.replace('ffmpeg', 'ffprobe');
+            const { execFile } = await import('child_process');
+            const { promisify } = await import('util');
+            const execFileAsync = promisify(execFile);
 
-            tempFiles.push(audioPath);
+            let hasAudio = false;
+            try {
+                const { stdout } = await execFileAsync(ffprobePath, [
+                    '-v', 'error', '-select_streams', 'a:0',
+                    '-show_entries', 'stream=codec_type',
+                    '-of', 'default=noprint_wrappers=1:nokey=1',
+                    videoPath
+                ]);
+                hasAudio = stdout.trim() === 'audio';
+            } catch (_) {
+                hasAudio = false;
+            }
 
-            // Transcribe with Whisper (local)
-            console.log(`[VIDEO-AI] [${videoId}] 🧠 Starting Whisper transcription (model: medium)...`);
-            const whisperStart = Date.now();
-            const { transcribeWithWhisper } = await import('./extractSRT.js');
-            srtContent = await transcribeWithWhisper(audioPath);
-            const whisperDuration = ((Date.now() - whisperStart) / 1000).toFixed(2);
+            if (!hasAudio) {
+                console.log(`[VIDEO-AI] [${videoId}] ⚠️  Video has no audio stream — skipping transcription`);
+            } else {
+                console.log(`[VIDEO-AI] [${videoId}] 🔊 Extracting audio from video...`);
+                await new Promise((resolve, reject) => {
+                    const ffmpeg = require('fluent-ffmpeg');
+                    ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+                    ffmpeg(videoPath)
+                        .output(audioPath)
+                        .audioCodec('libmp3lame')
+                        .on('end', () => {
+                            const stats = fs.statSync(audioPath);
+                            const audioSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+                            console.log(`[VIDEO-AI] [${videoId}] ✅ Audio extracted: ${audioSizeMB}MB`);
+                            resolve();
+                        })
+                        .on('error', reject)
+                        .run();
+                });
 
-            console.log(`[VIDEO-AI] [${videoId}] ✅ Whisper transcription completed in ${whisperDuration}s`);
-            console.log(`[VIDEO-AI] [${videoId}]    Transcript length: ${srtContent.length} characters\n`);
+                tempFiles.push(audioPath);
+
+                console.log(`[VIDEO-AI] [${videoId}] 🧠 Starting Whisper transcription (model: medium)...`);
+                const whisperStart = Date.now();
+                const { transcribeWithWhisper } = await import('./extractSRT.js');
+                srtContent = await transcribeWithWhisper(audioPath);
+                const whisperDuration = ((Date.now() - whisperStart) / 1000).toFixed(2);
+
+                console.log(`[VIDEO-AI] [${videoId}] ✅ Whisper transcription completed in ${whisperDuration}s`);
+                console.log(`[VIDEO-AI] [${videoId}]    Transcript length: ${srtContent.length} characters\n`);
+            }
         } else {
             const srtDuration = ((Date.now() - srtStart) / 1000).toFixed(2);
             console.log(`[VIDEO-AI] [${videoId}] ✅ SRT subtitles extracted in ${srtDuration}s`);

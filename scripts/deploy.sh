@@ -130,6 +130,19 @@ docker build \
     .
 
 # ==========================================
+# AUTENTICAÇÃO NO DOCKER HUB
+# ==========================================
+echo ""
+echo "🔑 Verificando autenticação no Docker Hub..."
+mkdir -p "$DOCKER_CONFIG"
+if [ ! -f "$DOCKER_CONFIG/config.json" ] || ! grep -q '"auth"' "$DOCKER_CONFIG/config.json" 2>/dev/null; then
+    echo -e "${YELLOW}Login necessário...${NC}"
+    docker login -u thiagouni
+else
+    echo -e "${GREEN}✓ Já autenticado no Docker Hub${NC}"
+fi
+
+# ==========================================
 # PUSH PARA DOCKER HUB
 # ==========================================
 echo ""
