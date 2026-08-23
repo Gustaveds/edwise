@@ -3,7 +3,7 @@ version: '3.8'
 services:
   redis:
     image: redis:7-alpine
-    command: redis-server --requirepass ***REMOVED_REDIS_PASSWORD***
+    command: redis-server --requirepass ${REDIS_PASSWORD}
     networks:
       - tpr_ia
     deploy:
@@ -26,28 +26,28 @@ services:
       - NODE_ENV=production
       - PORT=3010
 
-      # PostgreSQL (External - ***REMOVED_DB_HOST***)
-      - DB_HOST=***REMOVED_DB_HOST***
-      - DB_USER=postgres
-      - DB_PASSWORD=***REMOVED_DB_PASSWORD***
-      - DB_DATABASE=EdWise
-      - DB_PORT=5432
+      # PostgreSQL (External)
+      - DB_HOST=${DB_HOST}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_DATABASE=${DB_DATABASE:-EdWise}
+      - DB_PORT=${DB_PORT:-5432}
 
       # Auth
-      - JWT_SECRET=***REMOVED_JWT_SECRET***
-      - GEMINI_API_KEY=***REMOVED_GEMINI_API_KEY***
+      - JWT_SECRET=${JWT_SECRET}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
 
       # Redis (External - já rodando em outro service)
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=***REMOVED_REDIS_PASSWORD***
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_DB=15
 
-      # MinIO/S3 (External - s3.tgbia.com)
-      - MINIO_SERVER_URL=https://s3.tgbia.com
-      - MINIO_ACCESS_KEY=***REMOVED_MINIO_ACCESS_KEY***
-      - MINIO_SECRET_KEY=***REMOVED_MINIO_SECRET_KEY***
-      - MINIO_BUCKET=edwise
+      # MinIO/S3 (External)
+      - MINIO_SERVER_URL=${MINIO_SERVER_URL}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_BUCKET=${MINIO_BUCKET:-edwise}
 
     networks:
       - tpr_ia
@@ -92,27 +92,27 @@ services:
       - NODE_ENV=production
 
       # PostgreSQL
-      - DB_HOST=***REMOVED_DB_HOST***
-      - DB_USER=postgres
-      - DB_PASSWORD=***REMOVED_DB_PASSWORD***
-      - DB_DATABASE=EdWise
-      - DB_PORT=5432
+      - DB_HOST=${DB_HOST}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_DATABASE=${DB_DATABASE:-EdWise}
+      - DB_PORT=${DB_PORT:-5432}
 
       # Auth
-      - JWT_SECRET=***REMOVED_JWT_SECRET***
-      - GEMINI_API_KEY=***REMOVED_GEMINI_API_KEY***
+      - JWT_SECRET=${JWT_SECRET}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
 
       # Redis - Critical for queue processing
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=***REMOVED_REDIS_PASSWORD***
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_DB=15
 
       # MinIO/S3 - Needed to download videos for processing
-      - MINIO_SERVER_URL=https://s3.tgbia.com
-      - MINIO_ACCESS_KEY=***REMOVED_MINIO_ACCESS_KEY***
-      - MINIO_SECRET_KEY=***REMOVED_MINIO_SECRET_KEY***
-      - MINIO_BUCKET=edwise
+      - MINIO_SERVER_URL=${MINIO_SERVER_URL}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_BUCKET=${MINIO_BUCKET:-edwise}
 
     networks:
       - tpr_ia
