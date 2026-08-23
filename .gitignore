@@ -1,3 +1,6 @@
+# Docker local credentials
+.docker/
+
 # Logs
 logs
 *.log
