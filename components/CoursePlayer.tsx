@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Play, FileText, MessageSquare, Info, Edit3, Menu, Sparkles, Brain, ListChecks, Trash2, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Play, FileText, MessageSquare, Info, Edit3, Menu, Sparkles, Brain, ListChecks, Trash2, ChevronRight, Download, ExternalLink } from 'lucide-react';
 import { Course, MaterialType, QuizQuestion } from '../types';
 import ChatModal from './ChatModal';
 import VideoAIDisplay from './VideoAIDisplay';
@@ -229,6 +229,33 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                                         <p className="text-sm">Vídeo não disponível</p>
                                     </div>
                                 )
+                            ) : activeContent.type === 'pdf' || (activeContent.data && activeContent.data.s3_key) ? (
+                                <div className="w-full h-full bg-ink-900 flex flex-col items-center justify-center p-8 text-white text-center">
+                                    <div className="w-16 h-16 rounded-2xl bg-red-500/20 text-red-400 grid place-items-center mb-4">
+                                        <FileText className="w-8 h-8" />
+                                    </div>
+                                    <h3 className="text-xl font-display font-semibold mb-2">{activeContent.title}</h3>
+                                    <p className="text-xs text-ink-300 mb-6 max-w-md">
+                                        {activeContent.data?.filename || 'Documento / Arquivo anexo'}
+                                    </p>
+                                    <div className="flex items-center gap-3">
+                                        <a
+                                            href={`${config.API_URL}/api/contents/${activeContent.id}/file?token=${localStorage.getItem('token')}`}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="btn-primary flex items-center gap-2"
+                                        >
+                                            <ExternalLink className="w-4 h-4" /> Visualizar Arquivo
+                                        </a>
+                                        <a
+                                            href={`${config.API_URL}/api/contents/${activeContent.id}/file?token=${localStorage.getItem('token')}`}
+                                            download={activeContent.data?.filename || 'material.pdf'}
+                                            className="btn-secondary !bg-white/10 !text-white hover:!bg-white/20 !border-white/20 flex items-center gap-2"
+                                        >
+                                            <Download className="w-4 h-4" /> Baixar
+                                        </a>
+                                    </div>
+                                </div>
                             ) : (
                                 <div className="w-full h-full bg-white text-ink-900 p-8 overflow-y-auto ds-scroll">
                                     <h2 className="font-display text-2xl font-semibold mb-4">{activeContent.title}</h2>
