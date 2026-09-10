@@ -113,7 +113,7 @@ ${context}
 ---`;
 
         const model = genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash-exp',
+            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
             generationConfig: {
                 responseMimeType: 'application/json',
                 responseSchema: keyPointsSchema,
@@ -162,7 +162,7 @@ ${context}
         }
 
         const model = genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash-exp',
+            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
             generationConfig: {
                 responseMimeType: 'application/json',
                 responseSchema: quizSchema,
@@ -199,7 +199,7 @@ ${context}
 Pergunta do Aluno: "${question}"`;
 
         const model = genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash-exp',
+            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
         });
 
         const result = await model.generateContent(prompt);
@@ -223,7 +223,7 @@ ${context}
 ---`;
 
         const model = genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash-exp',
+            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
             generationConfig: {
                 responseMimeType: 'application/json',
                 responseSchema: flashcardSchema,
@@ -267,7 +267,7 @@ ${context}
 ---`;
 
         const model = genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash-exp',
+            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
             generationConfig: {
                 responseMimeType: 'application/json',
                 responseSchema: summarySchema,

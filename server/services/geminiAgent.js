@@ -11,7 +11,6 @@ dotenv.config({ path: resolve(__dirname, '../../.env') });
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// System prompt adapted from n8n workflow
 const SYSTEM_PROMPT = `# Quem você é:
 Você é o assistente de IA da EdWise, uma comunidade focada em desenvolvimento de Agentes de IA.
 
@@ -103,9 +102,9 @@ ${contextParts}
 
 ${srtContext ? `# SRT dos Vídeos Mais Relevantes:\n${srtContext}` : ''}`;
 
-        // 6. Call Gemini 2.5 Pro
+        // 6. Call Gemini
         const model = genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash-exp', // Using available model
+            model: 'gemini-2.5-flash',
             systemInstruction: fullSystemPrompt
         });
 
@@ -113,11 +112,11 @@ ${srtContext ? `# SRT dos Vídeos Mais Relevantes:\n${srtContext}` : ''}`;
         const response = result.response;
         const responseText = response.text();
 
-        // 7. Log interaction
+        // Log AI interaction to database
         if (userId) {
             await db.query(
                 'INSERT INTO ai_logs (user_id, course_id, message, response, metadata) VALUES ($1, $2, $3, $4, $5)',
-                [userId, courseId, userMessage, responseText, { model: 'gemini-2.0-flash-exp', context_docs: relevantDocs.length }]
+                [userId, courseId, userMessage, responseText, { model: 'gemini-2.5-flash', context_docs: relevantDocs.length }]
             );
         }
 

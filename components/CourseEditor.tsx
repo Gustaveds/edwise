@@ -10,7 +10,9 @@ import ResourcePicker from './ResourcePicker';
 import VideoForm from './forms/VideoForm';
 import TextForm from './forms/TextForm';
 import QuizForm from './forms/QuizForm';
+import FileForm from './forms/FileForm';
 import VideoUpload from './VideoUpload';
+import FileUploadModal from './FileUploadModal';
 import config from '../config';
 import { useDialog } from './ui/ConfirmDialog';
 import { useToast } from './ui/Toast';
@@ -47,6 +49,7 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
     const [activeModuleIndex, setActiveModuleIndex] = useState<number | null>(null);
     const [editingContent, setEditingContent] = useState<{ mIndex: number, cIndex: number } | null>(null);
     const [uploadModuleIndex, setUploadModuleIndex] = useState<number | null>(null);
+    const [uploadFileModuleIndex, setUploadFileModuleIndex] = useState<number | null>(null);
 
     useEffect(() => {
         if (course) {
@@ -170,13 +173,19 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
                 return;
             }
 
+            if (type === MaterialType.File || type === MaterialType.PDF) {
+                setUploadFileModuleIndex(activeModuleIndex);
+                setPickerOpen(false);
+                return;
+            }
+
             const contentRes = await fetch(config.API_URL + '/api/contents', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                 body: JSON.stringify({
                     module_id: module.id,
                     title: `Novo ${type}`,
-                    type, data: '', description: ''
+                    type, data: {}, description: ''
                 })
             });
             if (!contentRes.ok) throw new Error('Failed to create content');
@@ -408,6 +417,12 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
                 return <TextForm {...commonProps} />;
             case MaterialType.Quiz:
                 return <QuizForm {...commonProps} />;
+            case MaterialType.File:
+            case MaterialType.PDF:
+            case 'FILE':
+            case 'PDF':
+            case 'WORD':
+                return <FileForm {...commonProps} />;
             default:
                 return <div className="p-8 text-ink-600">Editor para <strong>{content.type}</strong> em desenvolvimento.</div>;
         }
@@ -719,6 +734,31 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
                             settings: { status: videoData.status }
                         };
                         newModules[uploadModuleIndex].contents.push(newContent);
+                        setModules(newModules);
+                    }}
+                />
+            )}
+
+            {uploadFileModuleIndex !== null && (
+                <FileUploadModal
+                    moduleId={modules[uploadFileModuleIndex].id}
+                    onUploadComplete={() => {
+                        setUploadFileModuleIndex(null);
+                        fetchCourseDetails();
+                    }}
+                    onCancel={() => setUploadFileModuleIndex(null)}
+                    onFileCreated={(fileData) => {
+                        const newModules = [...modules];
+                        const newContent: any = {
+                            id: fileData.id.toString(),
+                            title: fileData.title,
+                            type: fileData.type === 'word' ? MaterialType.File : MaterialType.PDF,
+                            content: '',
+                            description: '',
+                            data: fileData.data,
+                            settings: {}
+                        };
+                        newModules[uploadFileModuleIndex].contents.push(newContent);
                         setModules(newModules);
                     }}
                 />

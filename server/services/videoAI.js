@@ -22,7 +22,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 async function generateSummary(captions, title) {
     try {
         const model = genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash-exp',
+            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
             systemInstruction: `Você é um resumidor de vídeo educacional experiente. Você possui muita experiência em programação e desenvolvimento de automação e agentes de IA.
 
 Sua função é criar um resumo do vídeo e listar todas as ferramentas utilizadas no vídeo indicando em qual tempo ela foi mencionada com uma breve descrição.
@@ -71,7 +71,7 @@ async function generateFAQs(parsedSrt, title, summary, videoId = null, updateSta
 
     try {
         const model = genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash-exp',
+            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
             systemInstruction: `<RESUMO_VIDEO>
 ${summary}
 </RESUMO_VIDEO>

@@ -1,4 +1,13 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config({ path: path.resolve(__dirname, './.env') });
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
 import db from './db.js';
@@ -10,9 +19,8 @@ import { generateQuizWithRag, generateFlashcardsWithRag } from './services/ragAI
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import s3Client from './services/minio.js';
-import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand, CreateBucketCommand } from '@aws-sdk/client-s3';
 import fs from 'fs';
-import path from 'path';
 import { videoQueue } from './services/queue.js';
 
 const app = express();
@@ -23,6 +31,15 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 app.use(cors());
 app.use(express.json());
+
+// Root & Health check
+app.get('/', (req, res) => {
+    res.json({ status: 'ok', message: 'EdWise AI Backend API is running', port: PORT });
+});
+
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', uptime: process.uptime() });
+});
 
 // Helper function to sanitize titles
 function sanitizeTitle(title) {
@@ -496,19 +513,71 @@ app.delete('/api/modules/:id', authenticateToken, async (req, res) => {
     }
 });
 
+// Helper to sanitize content payload for Postgres
+function sanitizeContentPayload(body) {
+    let { module_id, title, type, data, description, settings, is_published, release_at, release_after_days } = body;
+
+    title = sanitizeTitle(title || 'Sem título');
+
+    // Normalize type to lowercase and map to allowed database types
+    let normType = (type || 'text').toString().toLowerCase();
+    if (normType === 'file') normType = 'pdf';
+    if (normType === 'assignment') normType = 'text';
+
+    const validTypes = ['pdf', 'video', 'text', 'link', 'word', 'quiz'];
+    if (!validTypes.includes(normType)) {
+        normType = 'text';
+    }
+
+    // Sanitize data for JSONB column
+    let cleanData = {};
+    if (data && typeof data === 'object') {
+        cleanData = data;
+    } else if (typeof data === 'string' && data.trim() !== '') {
+        try {
+            cleanData = JSON.parse(data);
+        } catch {
+            cleanData = { text: data };
+        }
+    }
+
+    let cleanSettings = {};
+    if (settings && typeof settings === 'object') {
+        cleanSettings = settings;
+    } else if (typeof settings === 'string' && settings.trim() !== '') {
+        try {
+            cleanSettings = JSON.parse(settings);
+        } catch {
+            cleanSettings = {};
+        }
+    }
+
+    return {
+        module_id,
+        title,
+        type: normType,
+        data: cleanData,
+        description: description || '',
+        settings: cleanSettings,
+        is_published: !!is_published,
+        release_at: release_at || null,
+        release_after_days: release_after_days || null
+    };
+}
+
 // --- Content Routes ---
 
 app.post('/api/contents', authenticateToken, async (req, res) => {
     if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
-    const { module_id, title, type, data, description, settings, is_published, release_at, release_after_days } = req.body;
+    const sanitized = sanitizeContentPayload(req.body);
     try {
         const result = await db.query(
             'INSERT INTO contents (module_id, title, type, data, description, settings, is_published, release_at, release_after_days) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
-            [module_id, title, type, data, description, settings || {}, is_published || false, release_at, release_after_days]
+            [sanitized.module_id, sanitized.title, sanitized.type, sanitized.data, sanitized.description, sanitized.settings, sanitized.is_published, sanitized.release_at, sanitized.release_after_days]
         );
         res.json(result.rows[0]);
     } catch (err) {
-        console.error(err);
+        console.error('Error creating content:', err);
         res.status(500).json({ error: 'Failed to create content' });
     }
 });
@@ -516,21 +585,22 @@ app.post('/api/contents', authenticateToken, async (req, res) => {
 app.put('/api/contents/:id', authenticateToken, async (req, res) => {
     if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
     const contentId = req.params.id;
-    const { title, type, data, description, settings, is_published, release_at, release_after_days } = req.body;
+    const sanitized = sanitizeContentPayload(req.body);
     try {
         const result = await db.query(
             'UPDATE contents SET title = $1, type = $2, data = $3, description = $4, settings = $5, is_published = $6, release_at = $7, release_after_days = $8 WHERE id = $9 RETURNING *',
-            [title, type, data, description, settings || {}, is_published, release_at, release_after_days, contentId]
+            [sanitized.title, sanitized.type, sanitized.data, sanitized.description, sanitized.settings, sanitized.is_published, sanitized.release_at, sanitized.release_after_days, contentId]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Content not found' });
         }
         res.json(result.rows[0]);
     } catch (err) {
-        console.error(err);
+        console.error('Error updating content:', err);
         res.status(500).json({ error: 'Failed to update content' });
     }
 });
+
 
 app.post('/api/quizzes', authenticateToken, async (req, res) => {
     if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
@@ -885,6 +955,144 @@ app.post('/api/upload/video', authenticateToken, upload.single('video'), async (
         res.status(500).json({ error: 'Failed to upload video' });
     }
 });
+
+// --- File / Document Upload Route (PDF, DOCX, TXT, etc.) ---
+
+app.post('/api/upload/file', authenticateToken, upload.single('file'), async (req, res) => {
+    if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
+
+    const file = req.file;
+    let { title, description, module_id, type } = req.body;
+
+    if (!file) {
+        return res.status(400).json({ error: 'Nenhum arquivo fornecido' });
+    }
+
+    if (!module_id) {
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        return res.status(400).json({ error: 'ID do módulo é obrigatório' });
+    }
+
+    // Default title from filename if not provided
+    if (!title || !title.trim()) {
+        title = file.originalname.replace(/\.[^/.]+$/, '');
+    }
+    title = sanitizeTitle(title);
+
+    // Determine type (database allows 'pdf', 'word', 'text', 'link', 'video', 'quiz')
+    let contentType = 'pdf';
+    const ext = path.extname(file.originalname).toLowerCase();
+    const mime = (file.mimetype || '').toLowerCase();
+    if (ext === '.docx' || ext === '.doc' || mime.includes('word')) {
+        contentType = 'word';
+    } else if (ext === '.pdf' || mime.includes('pdf')) {
+        contentType = 'pdf';
+    } else if (type && ['pdf', 'word', 'text'].includes(type.toLowerCase())) {
+        contentType = type.toLowerCase();
+    }
+
+    const fileKey = `files/${uuidv4()}-${file.originalname}`;
+    const fileStream = fs.createReadStream(file.path);
+
+    try {
+        // Ensure bucket exists
+        try {
+            await s3Client.send(new CreateBucketCommand({ Bucket: BUCKET_NAME }));
+        } catch (bErr) {
+            // Bucket already exists
+        }
+
+        // 1. Upload to MinIO S3
+        const uploadParams = {
+            Bucket: BUCKET_NAME,
+            Key: fileKey,
+            Body: fileStream,
+            ContentType: file.mimetype || 'application/octet-stream',
+        };
+
+        await s3Client.send(new PutObjectCommand(uploadParams));
+
+        // 2. Create Content Record
+        const contentData = {
+            s3_key: fileKey,
+            filename: file.originalname,
+            size: file.size,
+            mimetype: file.mimetype
+        };
+
+        const contentResult = await db.query(
+            'INSERT INTO contents (module_id, title, type, description, data, is_published) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+            [module_id, title, contentType, description || '', contentData, true]
+        );
+
+        // 3. Cleanup temp file
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+
+        res.json({
+            success: true,
+            content: contentResult.rows[0],
+            content_id: contentResult.rows[0].id,
+            s3_key: fileKey,
+            filename: file.originalname,
+            message: 'Arquivo enviado com sucesso.'
+        });
+
+    } catch (err) {
+        console.error('File upload error:', err);
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        res.status(500).json({ error: 'Falha ao enviar arquivo' });
+    }
+});
+
+// GET - Stream / Download file from S3/MinIO
+app.get('/api/contents/:id/file', async (req, res) => {
+    const contentId = req.params.id;
+    const token = req.headers['authorization']?.split(' ')[1] || req.query.token;
+
+    if (!token) return res.sendStatus(401);
+
+    try {
+        jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+        return res.sendStatus(403);
+    }
+
+    try {
+        const result = await db.query('SELECT data, title, type FROM contents WHERE id = $1', [contentId]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Conteúdo não encontrado' });
+        }
+
+        const content = result.rows[0];
+        const s3Key = content.data?.s3_key;
+        if (!s3Key) {
+            return res.status(404).json({ error: 'Arquivo não encontrado' });
+        }
+
+        const command = new GetObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: s3Key,
+        });
+
+        const response = await s3Client.send(command);
+
+        const filename = content.data?.filename || `${content.title}.${content.type === 'pdf' ? 'pdf' : 'bin'}`;
+        const contentType = response.ContentType || content.data?.mimetype || (content.type === 'pdf' ? 'application/pdf' : 'application/octet-stream');
+
+        res.setHeader('Content-Type', contentType);
+        if (response.ContentLength) {
+            res.setHeader('Content-Length', response.ContentLength);
+        }
+        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(filename)}"`);
+
+        response.Body.pipe(res);
+
+    } catch (err) {
+        console.error('Error streaming file:', err);
+        res.status(500).json({ error: 'Falha ao obter arquivo' });
+    }
+});
+
 
 // --- Video AI Processing Routes ---
 
