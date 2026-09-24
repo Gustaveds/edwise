@@ -15,148 +15,53 @@ dotenv.config({ path: resolve(__dirname, '../../.env') });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 /**
- * Generate summary of video using Gemini
- * @param {string} captions - Full SRT/captions text
+ * Generate the video summary AND the FAQ list in a single Gemini call.
+ * Previously this was 1 call for the summary + 1 call per 3-minute batch of
+ * FAQs (e.g. 5 calls for a 10-minute video) — merging them into one call
+ * cuts Gemini usage per video down to the minimum, which matters a lot
+ * against the free tier's daily request quota.
+ * @param {string} srtContent - Full SRT/transcript text
  * @param {string} title - Video title
- * @returns {Promise<string>} - Video summary in Markdown
+ * @returns {Promise<{summary: string, faqs: Array<{pergunta: string, tempo: string}>}>}
  */
-async function generateSummary(captions, title) {
+async function generateSummaryAndFAQs(srtContent, title) {
     try {
         const model = genAI.getGenerativeModel({
-            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
-            systemInstruction: `Você é um resumidor de vídeo educacional experiente. Você possui muita experiência em programação e desenvolvimento de automação e agentes de IA.
+            model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
+            systemInstruction: `Você é um assistente educacional experiente em programação e automação/agentes de IA. Você recebe a transcrição completa de um vídeo e produz, em uma ÚNICA resposta, duas coisas: um resumo e uma lista de perguntas frequentes com timestamps.
 
-Sua função é criar um resumo do vídeo e listar todas as ferramentas utilizadas no vídeo indicando em qual tempo ela foi mencionada com uma breve descrição.
+# Parte 1 — Resumo
+Crie um resumo detalhado do vídeo em Markdown, destacando os principais tópicos, ferramentas mencionadas (indicando o tempo de cada uma, formato t=2m47s) e o passo a passo. Evite listar a plataforma n8n a menos que seja absolutamente relevante. Não comece o resumo com "\`\`\`markdown".
 
-Evite listar a plataforma n8n na lista de ferramentas a menos que seja absolutamente relevante.
+# Parte 2 — Perguntas Frequentes (FAQs)
+Analise a transcrição do início ao fim (não só o começo) e crie várias perguntas cobrindo o vídeo INTEIRO, como um aluno perguntaria. Para cada pergunta, indique em qual minuto e segundo a resposta aparece, no formato do YouTube: apenas UM valor de hora (opcional), UM valor de minuto (opcional) e UM valor de segundo, cada um com sua letra uma única vez. Exemplos CORRETOS: "t=15m10s", "t=45s", "t=1h5m30s". Exemplos ERRADOS (nunca faça isso): "t=0m15m10s", "t=15m10s20s". Gere aproximadamente 2 a 4 perguntas para cada 3 minutos de conteúdo do vídeo, distribuídas ao longo de toda a duração — não concentre todas no início. Não crie perguntas cuja resposta não esteja presente na transcrição.
 
-Escreva sua resposta no formato MARKDOWN seguindo o template abaixo:
-
-# Título do vídeo
-
-## Resumo
-[Resumo detalhado do conteúdo do vídeo, destacando os principais tópicos, ferramentas, utilidade e passo a passo. O resumo deve ser objetivo e conciso.]
-
-## Ferramentas
-- **Ferramenta 1** (t=2m47s): Breve descrição e como foi utilizada
-- **Ferramenta 2** (t=5m30s): Breve descrição e como foi utilizada
-
-Não comece com "\`\`\`markdown"`
+# Formato de resposta
+Responda APENAS com um JSON válido, sem "\`\`\`json" no começo nem "\`\`\`" no final, seguindo exatamente este formato:
+{
+  "summary": "<resumo em markdown, com \\n para quebras de linha>",
+  "faqs": [ { "pergunta": string, "tempo": string }, ... ]
+}`
         });
 
         const prompt = `<title>
 ${title}
 </title>
 
-<captions>
-${captions}
-</captions>`;
+<transcricao_completa>
+${srtContent}
+</transcricao_completa>`;
 
         const result = await generateContentWithRetry(model, prompt);
-        return result.response.text();
+        const cleaned = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+
+        return {
+            summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+            faqs: Array.isArray(parsed.faqs) ? parsed.faqs : []
+        };
     } catch (error) {
-        console.error('Error generating summary:', error);
-        throw error;
-    }
-}
-
-/**
- * Generate FAQs based on SRT chunks with timestamps
- * @param {Object} parsedSrt - Parsed SRT grouped by minutes
- * @param {string} title - Video title
- * @param {string} summary - Video summary
- * @returns {Promise<Array>} - Array of FAQ objects with pergunta and tempo
- */
-async function generateFAQs(parsedSrt, title, summary, videoId = null, updateStage = null) {
-    const allFaqs = [];
-
-    try {
-        const model = genAI.getGenerativeModel({
-            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
-            systemInstruction: `<RESUMO_VIDEO>
-${summary}
-</RESUMO_VIDEO>
-
-<TITULO_VIDEO>
-${title}
-</TITULO_VIDEO>
-
-# Sua função
-Você é um analista de texto experiente. Sua função é analisar o texto em <SRT>. Tendo em consideração também o <RESUMO_VIDEO> e <TITULO_VIDEO>, crie várias perguntas baseado em como o aluno iria perguntar. Juntamente com a pergunta, indique em qual minuto e segundo do vídeo estará a resposta, utilizando o formato &t do YouTube. Exemplo t=15m10s e inclua esta informação na chave "tempo".
-
-# Objetivo
-Seu objetivo é analisar com precisão o texto e contexto e criar perguntas cuja resposta está indicada neste tempo. Apenas crie perguntas que sejam relevantes para este tempo. Tenha também como referência o <RESUMO_VIDEO> e <TITULO_VIDEO> para analisar perguntas que tenham relação a eles também.
-
-# Variações
-Crie variações de perguntas baseado no <TITULO_VIDEO> e <RESUMO_VIDEO> caso faça sentido. Caso não fizer sentido, não crie as variações.
-
-# Evite
-Não crie perguntas cuja resposta não esteja presente em <SRT>.
-Não comece a resposta com "\`\`\`json". Responda apenas usando o formato em JSON.
-
-# Formato
-Responda apenas utilizando o formato JSON, sem aspas, sem "\`\`\`json" no começo e sem "\`\`\`" no final. Utilize a Schema abaixo:
-[
-    {
-        "pergunta": string,
-        "tempo": string
-    }
-]`
-        });
-
-        // Process in batches (every 3 minutes of video)
-        const minutes = Object.keys(parsedSrt).map(Number).sort((a, b) => a - b);
-        const totalBatches = Math.ceil(minutes.length / 3);
-
-        if (videoId) {
-            console.log(`[VIDEO-AI] [${videoId}] ❓ Starting FAQ generation: ${totalBatches} batches to process`);
-        }
-
-        for (let i = 0; i < minutes.length; i += 3) {
-            const batchNumber = Math.floor(i / 3) + 1;
-            const batchMinutes = minutes.slice(i, i + 3);
-            const srtChunk = batchMinutes.map(min => {
-                return parsedSrt[min].map((item, idx) =>
-                    `${idx + 1}\n\n${item.time}\n${item.text}\n`
-                ).join('\n');
-            }).join('\n');
-
-            const prompt = `<SRT>
-${srtChunk}
-</SRT>`;
-
-            try {
-                if (videoId) {
-                    console.log(`[VIDEO-AI] [${videoId}] ❓ Generating FAQs batch ${batchNumber}/${totalBatches} (minutes ${batchMinutes[0]}-${batchMinutes[batchMinutes.length - 1]})...`);
-                }
-
-                const result = await generateContentWithRetry(model, prompt);
-                const responseText = result.response.text();
-
-                // Parse JSON response
-                const cleanText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-                const faqs = JSON.parse(cleanText);
-                if (Array.isArray(faqs)) {
-                    allFaqs.push(...faqs);
-                    if (videoId) {
-                        console.log(`[VIDEO-AI] [${videoId}] ✅ Batch ${batchNumber}/${totalBatches} completed: +${faqs.length} FAQs (total: ${allFaqs.length})`);
-                    }
-                }
-            } catch (error) {
-                if (videoId) {
-                    console.error(`[VIDEO-AI] [${videoId}] ⚠️  Error in batch ${batchNumber}/${totalBatches}:`, error.message);
-                }
-                // Continue to next batch
-            }
-        }
-
-        if (videoId) {
-            console.log(`[VIDEO-AI] [${videoId}] ✅ FAQ generation complete: ${allFaqs.length} total FAQs generated`);
-        }
-
-        return allFaqs;
-    } catch (error) {
-        console.error('Error generating FAQs:', error);
+        console.error('Error generating summary+FAQs:', error);
         throw error;
     }
 }
@@ -286,26 +191,20 @@ async function processVideoWithAI(videoId, updateStage = null) {
         const minuteCount = Object.keys(parsedSrt).length;
         console.log(`[VIDEO-AI] [${videoId}] ✅ Transcript parsed: ${minuteCount} minutes of content\n`);
 
-        // 5. Generate summary
-        console.log(`[VIDEO-AI] [${videoId}] 🤖 [5/6] Generating AI summary with Gemini...`);
+        // 5-6. Generate summary AND FAQs in a single Gemini call (see
+        // generateSummaryAndFAQs — cuts request count vs. one call for the
+        // summary plus one per 3-minute FAQ batch).
+        console.log(`[VIDEO-AI] [${videoId}] 🤖 [5/6] Generating AI summary + FAQs with Gemini (chamada única)...`);
         console.log(`[VIDEO-AI] [${videoId}] ⏰ ${timestamp()}`);
         if (updateStage) await updateStage(videoId, 'generating_summary');
 
-        const summaryStart = Date.now();
-        const summary = await generateSummary(srtContent, content.title);
-        const summaryDuration = ((Date.now() - summaryStart) / 1000).toFixed(2);
-        console.log(`[VIDEO-AI] [${videoId}] ✅ Summary generated in ${summaryDuration}s`);
+        const genStart = Date.now();
+        const { summary, faqs } = await generateSummaryAndFAQs(srtContent, content.title);
+        const genDuration = ((Date.now() - genStart) / 1000).toFixed(2);
+        console.log(`[VIDEO-AI] [${videoId}] ✅ Summary + ${faqs.length} FAQs generated in ${genDuration}s`);
         console.log(`[VIDEO-AI] [${videoId}]    Summary length: ${summary.length} characters\n`);
 
-        // 6. Generate FAQs and prepare embeddings data
-        console.log(`[VIDEO-AI] [${videoId}] ❓ [6/7] Generating FAQs with Gemini...`);
-        console.log(`[VIDEO-AI] [${videoId}] ⏰ ${timestamp()}`);
         if (updateStage) await updateStage(videoId, 'generating_faqs');
-
-        const faqStart = Date.now();
-        const faqs = await generateFAQs(parsedSrt, content.title, summary, videoId, updateStage);
-        const faqDuration = ((Date.now() - faqStart) / 1000).toFixed(2);
-        console.log(`[VIDEO-AI] [${videoId}] ✅ All FAQs generated in ${faqDuration}s\n`);
 
         // 7. Generate and store embeddings in documents table
         console.log(`[VIDEO-AI] [${videoId}] 🧠 [7/7] Generating and storing embeddings...`);
@@ -416,6 +315,5 @@ async function processVideoWithAI(videoId, updateStage = null) {
 
 export {
     processVideoWithAI,
-    generateSummary,
-    generateFAQs
+    generateSummaryAndFAQs
 };

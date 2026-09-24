@@ -11,95 +11,20 @@ dotenv.config({ path: resolve(__dirname, '../../.env') });
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Schema definitions for structured output
-const quizSchema = {
-    type: 'object',
-    properties: {
-        questions: {
-            type: 'array',
-            description: 'Uma lista de perguntas do quiz.',
-            items: {
-                type: 'object',
-                properties: {
-                    question: {
-                        type: 'string',
-                        description: 'O texto da pergunta.'
-                    },
-                    options: {
-                        type: 'array',
-                        description: 'Uma lista de 4 opções de múltipla escolha.',
-                        items: {
-                            type: 'string'
-                        }
-                    },
-                    correctAnswer: {
-                        type: 'string',
-                        description: 'A resposta correta dentre as opções.'
-                    }
-                },
-                required: ['question', 'options', 'correctAnswer']
-            }
-        }
-    },
-    required: ['questions']
-};
+/**
+ * O modelo padrão (gemini-3.5-flash-lite, escolhido pela cota diária bem
+ * maior que a dos modelos "flash" normais) retorna 503 sempre que
+ * `generationConfig.responseMimeType: 'application/json'` é usado — com ou
+ * sem responseSchema. Por isso aqui pedimos JSON via instrução no prompt e
+ * fazemos o parse manual, igual já era feito em videoAI.js para as FAQs.
+ */
+function parseJsonResponse(text) {
+    const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(cleaned);
+}
 
-const keyPointsSchema = {
-    type: 'object',
-    properties: {
-        keyPoints: {
-            type: 'array',
-            description: 'Uma lista de 5 a 10 objetivos de aprendizado chave ou pontos principais.',
-            items: {
-                type: 'string'
-            }
-        }
-    },
-    required: ['keyPoints']
-};
-
-const flashcardSchema = {
-    type: 'object',
-    properties: {
-        flashcards: {
-            type: 'array',
-            description: 'Uma lista de flashcards, cada um com uma pergunta e uma resposta.',
-            items: {
-                type: 'object',
-                properties: {
-                    question: {
-                        type: 'string',
-                        description: 'O lado da "pergunta" do flashcard.'
-                    },
-                    answer: {
-                        type: 'string',
-                        description: 'O lado da "resposta" do flashcard.'
-                    }
-                },
-                required: ['question', 'answer']
-            }
-        }
-    },
-    required: ['flashcards']
-};
-
-const summarySchema = {
-    type: 'object',
-    properties: {
-        title: {
-            type: 'string',
-            description: 'Um título conciso para o resumo da sessão.'
-        },
-        points: {
-            type: 'array',
-            description: 'Uma lista de 3 a 7 pontos-chave que resumem a conversa.',
-            items: {
-                type: 'string'
-            }
-        }
-    },
-    required: ['title', 'points']
-};
+const QUIZ_JSON_FORMAT_INSTRUCTION = `Responda apenas utilizando o formato JSON abaixo, sem "\`\`\`json" no começo e sem "\`\`\`" no final:
+{ "questions": [ { "question": string, "options": [string, string, string, string], "correctAnswer": string }, ... ] }`;
 
 /**
  * Extract key learning points from course material
@@ -111,19 +36,17 @@ export async function extractKeyPoints(context) {
 Material do Curso:
 ---
 ${context}
----`;
+---
+
+Responda apenas utilizando o formato JSON abaixo, sem "\`\`\`json" no começo e sem "\`\`\`" no final:
+{ "keyPoints": [string, ...] }`;
 
         const model = genAI.getGenerativeModel({
-            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
-            generationConfig: {
-                responseMimeType: 'application/json',
-                responseSchema: keyPointsSchema,
-            },
+            model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
         });
 
         const result = await generateContentWithRetry(model, prompt);
-        const jsonText = result.response.text().trim();
-        const parsed = JSON.parse(jsonText);
+        const parsed = parseJsonResponse(result.response.text());
 
         if (parsed && Array.isArray(parsed.keyPoints)) {
             return parsed.keyPoints;
@@ -141,12 +64,18 @@ ${context}
  */
 export async function generateQuiz(context, topic, numberOfQuestions = 4, failedQuestions = null) {
     try {
-        let prompt = `Com base no seguinte material de curso sobre "${topic}", gere um quiz de múltipla escolha com ${numberOfQuestions} ${numberOfQuestions === 1 ? 'pergunta' : 'perguntas'} para testar a compreensão de um aluno. Cada pergunta deve ter 4 opções.
+        let prompt = `Com base ESTRITAMENTE no material de curso abaixo sobre "${topic}", gere um quiz de múltipla escolha com ${numberOfQuestions} ${numberOfQuestions === 1 ? 'pergunta' : 'perguntas'} para testar a compreensão de um aluno. Cada pergunta deve ter 4 opções.
+
+Regras importantes:
+- Use APENAS informações presentes no material abaixo. Não use conhecimento geral externo.
+- Se o material não tiver relação nenhuma com o tema "${topic}", gere as perguntas sobre os assuntos que de fato aparecem no material (não invente conteúdo sobre "${topic}").
 
 Material do Curso:
 ---
 ${context}
----`;
+---
+
+${QUIZ_JSON_FORMAT_INSTRUCTION}`;
 
         if (failedQuestions && failedQuestions.length > 0) {
             prompt = `Um aluno teve dificuldades com as seguintes perguntas sobre "${topic}". Gere um novo quiz de múltipla escolha com ${numberOfQuestions} ${numberOfQuestions === 1 ? 'pergunta' : 'perguntas'} que foque nos mesmos conceitos subjacentes, mas com perguntas e opções diferentes.
@@ -159,20 +88,17 @@ ${JSON.stringify(failedQuestions, null, 2)}
 Material Original do Curso:
 ---
 ${context}
----`;
+---
+
+${QUIZ_JSON_FORMAT_INSTRUCTION}`;
         }
 
         const model = genAI.getGenerativeModel({
-            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
-            generationConfig: {
-                responseMimeType: 'application/json',
-                responseSchema: quizSchema,
-            },
+            model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
         });
 
         const result = await generateContentWithRetry(model, prompt);
-        const jsonText = result.response.text().trim();
-        const parsed = JSON.parse(jsonText);
+        const parsed = parseJsonResponse(result.response.text());
 
         if (parsed && Array.isArray(parsed.questions)) {
             return parsed.questions;
@@ -200,7 +126,7 @@ ${context}
 Pergunta do Aluno: "${question}"`;
 
         const model = genAI.getGenerativeModel({
-            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
+            model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
         });
 
         const result = await generateContentWithRetry(model, prompt);
@@ -216,24 +142,26 @@ Pergunta do Aluno: "${question}"`;
  */
 export async function generateFlashcards(context, topic) {
     try {
-        const prompt = `Com base no seguinte material de curso, gere 5-10 flashcards sobre o tópico específico de "${topic}". Cada flashcard deve ter uma pergunta clara e uma resposta concisa.
+        const prompt = `Com base ESTRITAMENTE no seguinte material de curso, gere 5-10 flashcards sobre o tópico específico de "${topic}". Cada flashcard deve ter uma pergunta clara e uma resposta concisa.
+
+Regras importantes:
+- Use APENAS informações presentes no material abaixo. Não use conhecimento geral externo.
+- Se o material não tiver relação nenhuma com o tópico "${topic}", gere os flashcards sobre os assuntos que de fato aparecem no material (não invente conteúdo sobre "${topic}").
 
 Material do Curso:
 ---
 ${context}
----`;
+---
+
+Responda apenas utilizando o formato JSON abaixo, sem "\`\`\`json" no começo e sem "\`\`\`" no final:
+{ "flashcards": [ { "question": string, "answer": string }, ... ] }`;
 
         const model = genAI.getGenerativeModel({
-            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
-            generationConfig: {
-                responseMimeType: 'application/json',
-                responseSchema: flashcardSchema,
-            },
+            model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
         });
 
         const result = await generateContentWithRetry(model, prompt);
-        const jsonText = result.response.text().trim();
-        const parsed = JSON.parse(jsonText);
+        const parsed = parseJsonResponse(result.response.text());
 
         if (parsed && Array.isArray(parsed.flashcards)) {
             return parsed.flashcards;
@@ -265,19 +193,17 @@ ${historyText}
 Material do Curso para Contexto:
 ---
 ${context}
----`;
+---
+
+Responda apenas utilizando o formato JSON abaixo, sem "\`\`\`json" no começo e sem "\`\`\`" no final:
+{ "title": string, "points": [string, ...] }`;
 
         const model = genAI.getGenerativeModel({
-            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
-            generationConfig: {
-                responseMimeType: 'application/json',
-                responseSchema: summarySchema,
-            },
+            model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
         });
 
         const result = await generateContentWithRetry(model, prompt);
-        const jsonText = result.response.text().trim();
-        const parsed = JSON.parse(jsonText);
+        const parsed = parseJsonResponse(result.response.text());
 
         if (parsed && parsed.title && parsed.points) {
             return parsed;

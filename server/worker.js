@@ -2,6 +2,7 @@ import { Worker } from 'bullmq';
 import connection from './services/queue.js';
 import db from './db.js';
 import { processVideoWithAI } from './services/videoAI.js';
+import { processDocumentWithAI } from './services/documentAI.js';
 
 console.log('👷 Video Worker starting...');
 console.log(`👷 [WORKER] PID: ${process.pid} | Listening on queue 'video-processing' | Redis: ${process.env.REDIS_HOST || 'redis'}:${process.env.REDIS_PORT || '6379'}`);
@@ -27,7 +28,27 @@ async function updateVideoStage(videoId, stage) {
     );
 }
 
-const worker = new Worker('video-processing', async job => {
+async function processDocumentJob(job) {
+    const { contentId } = job.data;
+    const timestamp = () => new Date().toISOString();
+
+    console.log('\n' + '='.repeat(80));
+    console.log(`[DOCUMENT-PROCESSING] 📄 JOB ${job.id} STARTED (content ${contentId})`);
+    console.log(`[DOCUMENT-PROCESSING] ⏰ ${timestamp()}`);
+    console.log('='.repeat(80) + '\n');
+
+    const isLastAttempt = job.attemptsMade + 1 >= (job.opts.attempts || 1);
+    try {
+        await processDocumentWithAI(contentId);
+        console.log(`[DOCUMENT-PROCESSING] ✅ JOB ${job.id} COMPLETED SUCCESSFULLY\n`);
+    } catch (err) {
+        console.log(`[DOCUMENT-PROCESSING] ❌ JOB ${job.id} FAILED (tentativa ${job.attemptsMade + 1}/${job.opts.attempts || 1}): ${err.message}`);
+        console.log(`[DOCUMENT-PROCESSING] ${isLastAttempt ? '🛑 Sem mais tentativas' : '🔁 BullMQ vai tentar novamente'}\n`);
+        throw err;
+    }
+}
+
+async function processVideoJob(job) {
     const startTime = Date.now();
     const timestamp = () => new Date().toISOString();
 
@@ -103,35 +124,49 @@ const worker = new Worker('video-processing', async job => {
 
     } catch (err) {
         const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+        const isLastAttempt = job.attemptsMade + 1 >= (job.opts.attempts || 1);
 
         console.log('\n' + '='.repeat(80));
-        console.log(`[VIDEO-PROCESSING] [${videoId}] ❌ JOB ${job.id} FAILED`);
+        console.log(`[VIDEO-PROCESSING] [${videoId}] ❌ JOB ${job.id} FAILED (tentativa ${job.attemptsMade + 1}/${job.opts.attempts || 1})`);
         console.log(`[VIDEO-PROCESSING] [${videoId}] ⏰ ${timestamp()}`);
         console.log('='.repeat(80));
         console.log(`[VIDEO-PROCESSING] [${videoId}] 💥 Error Details:`);
         console.log(`[VIDEO-PROCESSING] [${videoId}]    Message: ${err.message}`);
         console.log(`[VIDEO-PROCESSING] [${videoId}]    Stack: ${err.stack}`);
         console.log(`[VIDEO-PROCESSING] [${videoId}] ⏱️  Failed after: ${duration}s`);
+        console.log(`[VIDEO-PROCESSING] [${videoId}] ${isLastAttempt ? '🛑 Sem mais tentativas — marcando como erro' : '🔁 BullMQ vai tentar novamente'}`);
         console.log('='.repeat(80) + '\n');
 
-        await db.query(
-            `UPDATE videos 
-             SET status = $1, 
-                 metadata = jsonb_set(
-                     jsonb_set(
-                         COALESCE(metadata, '{}'::jsonb), 
-                         '{error}', 
-                         to_jsonb($2::text)
-                     ),
-                     '{current_stage}',
-                     to_jsonb('error'::text)
-                 )
-             WHERE id = $3`,
-            ['error', err.message, videoId]
-        );
+        // Só marca status='error' (estado terminal) na última tentativa —
+        // caso contrário o frontend, que para de fazer polling ao ver 'error',
+        // acharia que falhou definitivamente enquanto o BullMQ ainda vai
+        // reprocessar o job em background.
+        if (isLastAttempt) {
+            await db.query(
+                `UPDATE videos
+                 SET status = $1,
+                     metadata = jsonb_set(
+                         jsonb_set(
+                             COALESCE(metadata, '{}'::jsonb),
+                             '{error}',
+                             to_jsonb($2::text)
+                         ),
+                         '{current_stage}',
+                         to_jsonb('error'::text)
+                     )
+                 WHERE id = $3`,
+                ['error', err.message, videoId]
+            );
+        }
         throw err;
     }
+}
 
+const worker = new Worker('video-processing', async job => {
+    if (job.name === 'process-document') {
+        return processDocumentJob(job);
+    }
+    return processVideoJob(job);
 }, { connection });
 
 worker.on('completed', job => {

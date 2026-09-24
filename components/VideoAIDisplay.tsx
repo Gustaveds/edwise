@@ -17,9 +17,10 @@ interface VideoAIData {
 interface VideoAIDisplayProps {
     videoId: number;
     isOwner: boolean;
+    onSeek?: (tempo: string) => void;
 }
 
-const VideoAIDisplay: React.FC<VideoAIDisplayProps> = ({ videoId, isOwner }) => {
+const VideoAIDisplay: React.FC<VideoAIDisplayProps> = ({ videoId, isOwner, onSeek }) => {
     const [aiData, setAiData] = useState<VideoAIData | null>(null);
     const [loading, setLoading] = useState(false);
     const [processing, setProcessing] = useState(false);
@@ -162,10 +163,15 @@ const VideoAIDisplay: React.FC<VideoAIDisplayProps> = ({ videoId, isOwner }) => 
                                     <MessageSquare className="w-4 h-4 text-brand-500 flex-shrink-0 mt-0.5" />
                                     <div className="flex-1 min-w-0">
                                         <p className="text-sm text-ink-800 font-medium mb-1.5">{faq.pergunta}</p>
-                                        <a href={`#${faq.tempo}`} className="inline-flex items-center gap-1 text-xs font-mono text-brand-600 hover:text-brand-700">
+                                        <button
+                                            type="button"
+                                            onClick={() => onSeek?.(faq.tempo)}
+                                            disabled={!onSeek}
+                                            className="inline-flex items-center gap-1 text-xs font-mono text-brand-600 hover:text-brand-700 disabled:text-ink-400 disabled:cursor-default"
+                                        >
                                             <Clock className="w-3 h-3" />
                                             {faq.tempo}
-                                        </a>
+                                        </button>
                                     </div>
                                 </div>
                             </div>

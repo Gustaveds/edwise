@@ -1,0 +1,18 @@
+# Sem isso, o Git normaliza terminadores de linha conforme a config local
+# (core.autocrlf), que no Windows costuma vir "true" por padrão — isso
+# converte scripts .sh para CRLF a cada checkout/commit e quebra a execução
+# no WSL/Linux ("bad interpreter: No such file or directory").
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.mp4 binary
