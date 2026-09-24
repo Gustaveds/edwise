@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import ProfessorDashboard from './components/ProfessorDashboard';
-import StudentDashboard from './components/StudentDashboard';
+import Home from './components/Home';
 import SettingsDashboard from './components/SettingsDashboard';
 import Login from './components/Login';
 import ForgotPassword from './components/ForgotPassword';
@@ -41,14 +40,10 @@ const AppContent: React.FC = () => {
     if (activeView === 'uploads' && userRole !== UserRole.Student) return <Uploads />;
     if (activeView === 'design-system') return <DesignSystem onClose={() => setActiveView('dashboard')} />;
 
-    // Default Views
-    if (userRole === UserRole.Student) {
-      return <StudentDashboard />;
-    } else {
-      // Professor and Admin see the Professor Dashboard by default for "Home"
-      // This allows Admins to manage courses just like Professors.
-      return <ProfessorDashboard />;
-    }
+    // Default view ("Home") — shared across all roles, distinct from the
+    // full course-management screen ("Meus Cursos"): quick carousel overview
+    // instead of the search/grid/list management UI.
+    return <Home userRole={userRole} />;
   };
 
   if (!isAuthenticated) {

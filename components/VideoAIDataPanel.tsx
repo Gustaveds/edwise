@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Loader2, CheckCircle, AlertCircle, ChevronDown, ChevronUp, FileText, MessageCircle, Clock } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import config from '../config';
+import ProcessingSteps from './VideoProcessingSteps';
 
 interface VideoAIDataPanelProps {
     videoId: number | string;
@@ -17,20 +18,32 @@ interface VideoAIData {
     error?: string;
 }
 
-const STAGE_LABELS: Record<string, string> = {
-    generating_summary:  'Gerando resumo com IA…',
-    generating_faqs:     'Criando FAQs…',
-    creating_embeddings: 'Criando embeddings…',
-    transcribing:        'Transcrevendo áudio…',
-};
-
 const VideoAIDataPanel: React.FC<VideoAIDataPanelProps> = ({ videoId }) => {
     const [data, setData] = useState<VideoAIData | null>(null);
     const [loading, setLoading] = useState(true);
     const [showTranscription, setShowTranscription] = useState(false);
     const [expandedFAQ, setExpandedFAQ] = useState<number | null>(null);
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    useEffect(() => { fetchVideoAIData(); }, [videoId]);
+    useEffect(() => {
+        fetchVideoAIData();
+        return () => {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+        };
+    }, [videoId]);
+
+    // Sem isso, esta tela ficava congelada mostrando a etapa de quando a
+    // página carregou, mesmo com o processamento continuando no worker.
+    useEffect(() => {
+        if (data?.status === 'processing' && !pollRef.current) {
+            pollRef.current = setInterval(fetchVideoAIData, 3000);
+        }
+        if (data?.status !== 'processing' && pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+        }
+    }, [data?.status]);
 
     const fetchVideoAIData = async () => {
         try {
@@ -49,7 +62,7 @@ const VideoAIDataPanel: React.FC<VideoAIDataPanelProps> = ({ videoId }) => {
         }
     };
 
-    if (loading) {
+    if (loading && !data) {
         return (
             <div className="flex items-center justify-center p-8 text-ink-500">
                 <Loader2 className="w-5 h-5 text-brand-500 animate-spin" />
@@ -69,12 +82,10 @@ const VideoAIDataPanel: React.FC<VideoAIDataPanelProps> = ({ videoId }) => {
                     <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
                     <h3 className="font-display font-semibold text-blue-900">Processando vídeo</h3>
                 </div>
-                <p className="text-sm text-blue-700">
-                    {STAGE_LABELS[data.current_stage || ''] || 'Processando…'}
-                </p>
-                <p className="text-xs text-blue-600 mt-2">
+                <p className="text-xs text-blue-600">
                     Os dados da IA estarão disponíveis em alguns minutos.
                 </p>
+                <ProcessingSteps status={data.status} stage={data.current_stage} />
             </div>
         );
     }
