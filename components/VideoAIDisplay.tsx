@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Sparkles, FileText, MessageSquare, Clock, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import config from '../config';
+import ProcessingSteps from './VideoProcessingSteps';
 
 interface VideoAIData {
     id: number;
@@ -11,6 +12,8 @@ interface VideoAIData {
     faqs: Array<{ pergunta: string; tempo: string }>;
     transcription: string | null;
     status: string;
+    current_stage?: string | null;
+    error?: string | null;
     processed: boolean;
 }
 
@@ -23,20 +26,46 @@ interface VideoAIDisplayProps {
 const VideoAIDisplay: React.FC<VideoAIDisplayProps> = ({ videoId, isOwner, onSeek }) => {
     const [aiData, setAiData] = useState<VideoAIData | null>(null);
     const [loading, setLoading] = useState(false);
-    const [processing, setProcessing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    useEffect(() => { loadAIData(); }, [videoId]);
+    useEffect(() => {
+        loadAIData();
+        return () => {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+        };
+    }, [videoId]);
+
+    // Assim que soubermos que o vídeo está em processamento — seja porque o
+    // usuário acabou de clicar em "Processar com IA", seja porque o pipeline
+    // automático do upload já está rodando — começa (ou para) o polling.
+    // Isso faz o indicador de etapas funcionar nos dois casos, não só quando
+    // o clique acontece nesta mesma sessão do componente.
+    useEffect(() => {
+        if (aiData?.status === 'processing' && !pollRef.current) {
+            startPolling();
+        }
+        if (aiData?.status !== 'processing' && pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+        }
+    }, [aiData?.status]);
+
+    const fetchAIData = async (): Promise<VideoAIData> => {
+        const token = localStorage.getItem('token');
+        const response = await axios.get(`${config.API_URL}/api/videos/${videoId}/ai-data`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        return response.data;
+    };
 
     const loadAIData = async () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('token');
-            const response = await axios.get(`${config.API_URL}/api/videos/${videoId}/ai-data`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            setAiData(response.data);
+            const data = await fetchAIData();
+            setAiData(data);
         } catch (err: any) {
             console.error('Error loading AI data:', err);
             setError(err.response?.data?.error || 'Failed to load AI data');
@@ -45,38 +74,42 @@ const VideoAIDisplay: React.FC<VideoAIDisplayProps> = ({ videoId, isOwner, onSee
         }
     };
 
+    const startPolling = () => {
+        const maxAttempts = 200; // ~10 minutos a cada 3s
+        let attempts = 0;
+        pollRef.current = setInterval(async () => {
+            attempts++;
+            try {
+                const data = await fetchAIData();
+                setAiData(data);
+                if (data.processed || data.status === 'error') {
+                    if (pollRef.current) clearInterval(pollRef.current);
+                    pollRef.current = null;
+                    if (data.status === 'error') {
+                        setError(data.error || 'Falha ao processar vídeo com IA');
+                    }
+                } else if (attempts >= maxAttempts) {
+                    if (pollRef.current) clearInterval(pollRef.current);
+                    pollRef.current = null;
+                    setError('O processamento está demorando mais que o esperado. Atualize a página em alguns instantes.');
+                }
+            } catch (err) {
+                console.error('Error polling AI data:', err);
+            }
+        }, 3000);
+    };
+
     const processWithAI = async () => {
-        setProcessing(true);
         setError(null);
         try {
             const token = localStorage.getItem('token');
             await axios.post(`${config.API_URL}/api/videos/${videoId}/process-ai`, {}, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            const maxAttempts = 200; // ~10 minutos a cada 3s
-            let attempts = 0;
-            const pollInterval = setInterval(async () => {
-                attempts++;
-                const response = await axios.get(`${config.API_URL}/api/videos/${videoId}/ai-data`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
-                if (response.data.processed || response.data.status === 'error') {
-                    clearInterval(pollInterval);
-                    setAiData(response.data);
-                    setProcessing(false);
-                    if (response.data.status === 'error') {
-                        setError(response.data.error || 'Falha ao processar vídeo com IA');
-                    }
-                } else if (attempts >= maxAttempts) {
-                    clearInterval(pollInterval);
-                    setProcessing(false);
-                    setError('O processamento está demorando mais que o esperado. Atualize a página em alguns instantes.');
-                }
-            }, 3000);
+            await loadAIData(); // status vira 'processing' e o effect acima liga o polling
         } catch (err: any) {
             console.error('Error processing video:', err);
             setError(err.response?.data?.error || 'Failed to process video with AI');
-            setProcessing(false);
         }
     };
 
@@ -98,6 +131,8 @@ const VideoAIDisplay: React.FC<VideoAIDisplayProps> = ({ videoId, isOwner, onSee
         );
     }
 
+    const isProcessing = aiData?.status === 'processing';
+
     if (!aiData?.processed && isOwner) {
         return (
             <div className="rounded-card bg-brand-gradient-soft ring-1 ring-brand-100 p-6">
@@ -108,16 +143,25 @@ const VideoAIDisplay: React.FC<VideoAIDisplayProps> = ({ videoId, isOwner, onSee
                 <p className="text-sm text-ink-700 mb-4">
                     Gere automaticamente um resumo detalhado e FAQs com timestamps usando IA.
                 </p>
-                {processing ? (
-                    <div className="flex items-center gap-2 text-brand-700 text-sm">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Processando vídeo… isso pode levar alguns minutos.</span>
+                {isProcessing ? (
+                    <div>
+                        <div className="flex items-center gap-2 text-brand-700 text-sm">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>Processando vídeo… isso pode levar alguns minutos.</span>
+                        </div>
+                        <ProcessingSteps status={aiData?.status} stage={aiData?.current_stage} />
                     </div>
                 ) : (
                     <button onClick={processWithAI} className="btn-primary">
                         <Sparkles className="w-4 h-4" />
                         Processar com IA
                     </button>
+                )}
+                {error && (
+                    <div className="mt-3 flex items-center gap-2 text-red-700 text-sm">
+                        <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                        <span>{error}</span>
+                    </div>
                 )}
             </div>
         );

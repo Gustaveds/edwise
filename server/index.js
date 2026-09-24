@@ -1235,6 +1235,7 @@ app.get('/api/videos/:id/ai-data', authenticateToken, async (req, res) => {
             faqs: faqs,
             transcription: video.transcription,
             status: video.status,
+            current_stage: video.metadata?.current_stage || null,
             error: video.metadata?.error || null,
             processed: video.status === 'ready'
         });
