@@ -3,6 +3,7 @@ import { searchDocuments, getVideoSRT, getAllVideos } from './ragService.js';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
+import { generateContentWithRetry } from './geminiRetry.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -104,20 +105,25 @@ ${srtContext ? `# SRT dos Vídeos Mais Relevantes:\n${srtContext}` : ''}`;
 
         // 6. Call Gemini
         const model = genAI.getGenerativeModel({
-            model: 'gemini-2.5-flash',
+            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
             systemInstruction: fullSystemPrompt
         });
 
-        const result = await model.generateContent(userMessage);
+        const result = await generateContentWithRetry(model, userMessage);
         const response = result.response;
         const responseText = response.text();
 
         // Log AI interaction to database
+        const usedModel = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
         if (userId) {
-            await db.query(
-                'INSERT INTO ai_logs (user_id, course_id, message, response, metadata) VALUES ($1, $2, $3, $4, $5)',
-                [userId, courseId, userMessage, responseText, { model: 'gemini-2.5-flash', context_docs: relevantDocs.length }]
-            );
+            try {
+                await db.query(
+                    'INSERT INTO ai_logs (user_id, course_id, message, response, metadata) VALUES ($1, $2, $3, $4, $5)',
+                    [userId, courseId, userMessage, responseText, { model: usedModel, context_docs: relevantDocs.length }]
+                );
+            } catch (logErr) {
+                console.warn('Warning: Failed to log AI interaction:', logErr.message);
+            }
         }
 
         return responseText;

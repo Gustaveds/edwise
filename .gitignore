@@ -1,6 +1,12 @@
 # Docker local credentials
 .docker/
 
+# Dados persistidos dos containers de dev (Postgres/MinIO/Redis) — ver docker-compose.dev.yml
+/data/
+
+# Backups de banco de dados (podem conter dados sensíveis)
+server/backups/
+
 # Logs
 logs
 *.log
@@ -31,3 +37,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+*.md
+!README.md
+!DOCUMENTACAO_SISTEMA.md
+!INICIAR_LINUX.md

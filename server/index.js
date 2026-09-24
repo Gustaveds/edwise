@@ -14,7 +14,6 @@ import db from './db.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { generateResponse } from './services/geminiAgent.js';
-import { processVideoWithAI } from './services/videoAI.js';
 import { generateQuizWithRag, generateFlashcardsWithRag } from './services/ragAI.js';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
@@ -1110,17 +1109,25 @@ app.post('/api/videos/:id/process-ai', authenticateToken, async (req, res) => {
 
         const video = videoCheck.rows[0];
 
-        // Check if already processed
-        if (video.summary && video.transcription) {
+        // Check if already processed or in progress
+        if (video.status === 'ready') {
             return res.status(400).json({ error: 'Video already processed with AI' });
         }
+        if (video.status === 'processing') {
+            return res.status(409).json({ error: 'Video is already being processed' });
+        }
 
-        // Start AI processing (this will run async)
-        processVideoWithAI(videoId)
-            .then(() => console.log(`✅ Video ${videoId} processed successfully`))
-            .catch(err => console.error(`❌ Error processing video ${videoId}:`, err));
+        await db.query(`UPDATE videos SET status = 'processing' WHERE id = $1`, [videoId]);
 
-        res.json({
+        // Send the job to the BullMQ queue instead of blocking the Express thread
+        await videoQueue.add('process-video', {
+            videoId: video.id,
+            s3Key: video.s3_key,
+            filename: video.filename,
+            contentId: video.content_id
+        });
+
+        res.status(202).json({
             success: true,
             message: 'AI processing started',
             videoId
@@ -1158,7 +1165,8 @@ app.get('/api/videos/:id/ai-data', authenticateToken, async (req, res) => {
             faqs: faqs,
             transcription: video.transcription,
             status: video.status,
-            processed: !!(video.summary && video.transcription)
+            error: video.metadata?.error || null,
+            processed: video.status === 'ready'
         });
 
     } catch (err) {
@@ -1442,8 +1450,19 @@ app.delete('/api/contents/:id', authenticateToken, async (req, res) => {
             }
         }
 
-        // Standard content deletion
+        // Standard content deletion (PDF, Word, text, link, etc.)
         await db.query('DELETE FROM contents WHERE id = $1', [contentId]);
+
+        const s3Key = content.data?.s3_key;
+        if (s3Key) {
+            try {
+                await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key }));
+                console.log(`✓ Deleted S3 file: ${s3Key}`);
+            } catch (s3Err) {
+                console.error(`⚠ Failed to delete S3 file: ${s3Key}`, s3Err);
+            }
+        }
+
         res.json({ success: true, message: 'Content deleted successfully' });
 
     } catch (err) {
@@ -1805,9 +1824,12 @@ app.delete('/api/videos/:id', authenticateToken, async (req, res) => {
 
         // 5. Delete from S3/MinIO if s3_key exists
         if (video.s3_key) {
-            // TODO: Implement S3 deletion
-            // await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: video.s3_key }));
-            console.log(`⚠ S3 file deletion not implemented yet: ${video.s3_key}`);
+            try {
+                await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: video.s3_key }));
+                console.log(`✓ Deleted S3 file: ${video.s3_key}`);
+            } catch (s3Err) {
+                console.error(`⚠ Failed to delete S3 file: ${video.s3_key}`, s3Err);
+            }
         }
 
         await db.query('COMMIT');

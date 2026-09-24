@@ -12,6 +12,12 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       host: '0.0.0.0',
+      // O projeto roda em /mnt/e (drive Windows montado via DrvFs no WSL2),
+      // que não suporta inotify — sem polling, o HMR nunca detecta mudanças.
+      watch: {
+        usePolling: true,
+        interval: 300,
+      },
     },
     plugins: [react()],
     define: {

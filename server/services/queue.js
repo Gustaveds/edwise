@@ -42,4 +42,12 @@ connection.on('error', (err) => {
 
 export const videoQueue = new Queue('video-processing', { connection });
 
+videoQueue.on('waiting', (job) => {
+    console.log(`⏳ [QUEUE] Job ${job.id} aguardando na fila 'video-processing'`);
+});
+
+videoQueue.on('error', (err) => {
+    console.error('❌ [QUEUE] Erro na fila video-processing:', err.message);
+});
+
 export default connection;

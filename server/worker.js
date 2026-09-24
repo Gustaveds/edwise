@@ -4,6 +4,7 @@ import db from './db.js';
 import { processVideoWithAI } from './services/videoAI.js';
 
 console.log('👷 Video Worker starting...');
+console.log(`👷 [WORKER] PID: ${process.pid} | Listening on queue 'video-processing' | Redis: ${process.env.REDIS_HOST || 'redis'}:${process.env.REDIS_PORT || '6379'}`);
 
 // Helper function to check if video still exists
 async function videoExists(videoId) {
