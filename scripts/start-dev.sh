@@ -69,9 +69,9 @@ for port in 3000 3001; do
     fi
 done
 
-# ─── 3. Sobe Postgres + MinIO ───────────────────────────────
-echo -e "${YELLOW}[2/5] Subindo Postgres e MinIO em docker...${NC}"
-$DC -f "$ROOT_DIR/docker-compose.dev.yml" up -d db minio minio-init
+# ─── 3. Sobe Postgres + MinIO + Redis ───────────────────────
+echo -e "${YELLOW}[2/5] Subindo Postgres, MinIO e Redis em docker...${NC}"
+$DC -f "$ROOT_DIR/docker-compose.dev.yml" up -d db minio minio-init redis
 
 echo -e "${YELLOW}  aguardando Postgres ficar pronto...${NC}"
 for i in $(seq 1 30); do
@@ -101,6 +101,20 @@ for i in $(seq 1 30); do
     fi
 done
 
+echo -e "${YELLOW}  aguardando Redis ficar pronto...${NC}"
+for i in $(seq 1 30); do
+    if docker exec edwise-redis-dev redis-cli ping >/dev/null 2>&1; then
+        echo -e "${GREEN}  ✓ Redis pronto${NC}"
+        break
+    fi
+    sleep 1
+    if [ "$i" = "30" ]; then
+        echo -e "${RED}  ❌ Redis não respondeu em 30s${NC}"
+        $DC -f "$ROOT_DIR/docker-compose.dev.yml" logs redis | tail -30
+        exit 1
+    fi
+done
+
 # ─── 4. Dependências ────────────────────────────────────────
 echo -e "${YELLOW}[3/5] Verificando dependências...${NC}"
 if [ ! -d "$ROOT_DIR/node_modules" ]; then
@@ -118,7 +132,13 @@ echo -e "${YELLOW}[4/5] Preparando schema...${NC}"
 
 # Init-db é destrutivo (drop em videos/video_segments) — só roda na 1ª vez,
 # detectando ausência da tabela `users`.
-USERS_EXISTS=$(docker exec edwise-db-dev psql -U "$DB_USER" -d "$DB_DATABASE" -tAc \
+# IMPORTANTE: checa via TCP em $DB_HOST/$DB_PORT — o mesmo host:porta que o
+# backend usa (DATABASE_URL/.env) — e não `docker exec edwise-db-dev`, que
+# consulta o Postgres DENTRO do container. Se um Postgres nativo (fora do
+# Docker) também escutar em $DB_PORT, ele vence a conexão local e o container
+# fica com um schema vazio para sempre, fazendo essa checagem falhar em todo
+# restart e o init-db.js rodar (e apagar videos/video_segments) sempre.
+USERS_EXISTS=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_DATABASE" -tAc \
     "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='users');" 2>/dev/null || echo "f")
 
 if [ "$USERS_EXISTS" != "t" ]; then
@@ -163,6 +183,13 @@ trap cleanup SIGINT SIGTERM
 ) > "$ROOT_DIR/backend.log" 2>&1 &
 PIDS+=($!)
 
+# Worker (consome a fila BullMQ — FFmpeg -> Whisper -> Gemini)
+(
+    cd "$ROOT_DIR/server" || exit 1
+    node --watch worker.js
+) > "$ROOT_DIR/worker.log" 2>&1 &
+PIDS+=($!)
+
 # Frontend (Vite dev — HMR ativo)
 (
     cd "$ROOT_DIR" || exit 1
@@ -182,6 +209,7 @@ echo -e "${WHITE}  Postgres : localhost:${DB_PORT} (db=${DB_DATABASE} user=${DB_
 echo ""
 echo -e "${CYAN}  Logs:${NC}"
 echo -e "${CYAN}    tail -f backend.log${NC}"
+echo -e "${CYAN}    tail -f worker.log${NC}"
 echo -e "${CYAN}    tail -f frontend.log${NC}"
 echo ""
 echo -e "${YELLOW}  Ctrl+C para parar backend+frontend (postgres permanece)${NC}"

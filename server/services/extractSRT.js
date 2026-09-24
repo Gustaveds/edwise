@@ -20,7 +20,7 @@ async function extractSRTFromFile(videoPath) {
 
     try {
         // Try to extract embedded subtitles first
-        await execAsync(`ffmpeg -i "${videoPath}" -map 0:s:0 "${outputPath}" -y`);
+        await execAsync(`ffmpeg -i "${videoPath}" -map 0:s:0 "${outputPath}" -y`, { timeout: 120_000 });
 
         if (fs.existsSync(outputPath)) {
             const srtContent = fs.readFileSync(outputPath, 'utf-8');
@@ -54,6 +54,7 @@ async function downloadVideoFromS3(s3Key) {
         await new Promise((resolve, reject) => {
             response.Body.pipe(writeStream);
             response.Body.on('error', reject);
+            writeStream.on('error', reject);
             writeStream.on('finish', resolve);
         });
 
@@ -157,7 +158,8 @@ async function transcribeWithWhisper(audioPath) {
 
             // Run Whisper via Python
             const { stdout, stderr } = await execPromise(
-                `python3 -c "import whisper; model = whisper.load_model('medium'); result = model.transcribe('${audioPath}', language='pt'); import json; print(json.dumps(result['segments']))"`
+                `python3 -c "import whisper; model = whisper.load_model('medium'); result = model.transcribe('${audioPath}', language='pt'); import json; print(json.dumps(result['segments']))"`,
+                { timeout: 900_000, maxBuffer: 50 * 1024 * 1024 }
             );
 
             // Parse Whisper output and convert to SRT

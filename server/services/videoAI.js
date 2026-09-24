@@ -5,6 +5,7 @@ import { dirname, resolve } from 'path';
 import { parseSRT, extractSRTFromFile, downloadVideoFromS3, cleanupFiles } from './extractSRT.js';
 import db from '../db.js';
 import { generateEmbedding } from './embeddingService.js';
+import { generateContentWithRetry } from './geminiRetry.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -51,7 +52,7 @@ ${title}
 ${captions}
 </captions>`;
 
-        const result = await model.generateContent(prompt);
+        const result = await generateContentWithRetry(model, prompt);
         return result.response.text();
     } catch (error) {
         console.error('Error generating summary:', error);
@@ -129,7 +130,7 @@ ${srtChunk}
                     console.log(`[VIDEO-AI] [${videoId}] ❓ Generating FAQs batch ${batchNumber}/${totalBatches} (minutes ${batchMinutes[0]}-${batchMinutes[batchMinutes.length - 1]})...`);
                 }
 
-                const result = await model.generateContent(prompt);
+                const result = await generateContentWithRetry(model, prompt);
                 const responseText = result.response.text();
 
                 // Parse JSON response
@@ -222,28 +223,24 @@ async function processVideoWithAI(videoId, updateStage = null) {
             console.log(`[VIDEO-AI] [${videoId}] ⚠️  No embedded SRT found in video file`);
             console.log(`[VIDEO-AI] [${videoId}] 🎤 Using Whisper for audio transcription (this may take several minutes)...`);
 
-            // Check if video has audio stream before attempting extraction
+            // Check if video has audio stream before attempting extraction.
+            // Note: @ffmpeg-installer/ffmpeg only bundles the ffmpeg binary, not
+            // ffprobe, so we probe with `ffmpeg -i` and parse the stream info it
+            // prints to stderr (ffmpeg always exits non-zero without an output file).
             const audioPath = videoPath.replace('.mp4', '.mp3');
             const fs = await import('fs');
             const { createRequire } = await import('module');
             const require = createRequire(import.meta.url);
             const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-            const ffprobePath = ffmpegInstaller.path.replace('ffmpeg', 'ffprobe');
             const { execFile } = await import('child_process');
             const { promisify } = await import('util');
             const execFileAsync = promisify(execFile);
 
             let hasAudio = false;
             try {
-                const { stdout } = await execFileAsync(ffprobePath, [
-                    '-v', 'error', '-select_streams', 'a:0',
-                    '-show_entries', 'stream=codec_type',
-                    '-of', 'default=noprint_wrappers=1:nokey=1',
-                    videoPath
-                ]);
-                hasAudio = stdout.trim() === 'audio';
-            } catch (_) {
-                hasAudio = false;
+                await execFileAsync(ffmpegInstaller.path, ['-i', videoPath]);
+            } catch (probeError) {
+                hasAudio = /Stream #\d+:\d+.*Audio:/i.test(probeError.stderr || '');
             }
 
             if (!hasAudio) {

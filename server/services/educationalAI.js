@@ -2,6 +2,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
+import { generateContentWithRetry } from './geminiRetry.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -120,7 +121,7 @@ ${context}
             },
         });
 
-        const result = await model.generateContent(prompt);
+        const result = await generateContentWithRetry(model, prompt);
         const jsonText = result.response.text().trim();
         const parsed = JSON.parse(jsonText);
 
@@ -169,7 +170,7 @@ ${context}
             },
         });
 
-        const result = await model.generateContent(prompt);
+        const result = await generateContentWithRetry(model, prompt);
         const jsonText = result.response.text().trim();
         const parsed = JSON.parse(jsonText);
 
@@ -202,7 +203,7 @@ Pergunta do Aluno: "${question}"`;
             model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
         });
 
-        const result = await model.generateContent(prompt);
+        const result = await generateContentWithRetry(model, prompt);
         return result.response.text();
     } catch (error) {
         console.error('Erro ao responder pergunta:', error);
@@ -230,7 +231,7 @@ ${context}
             },
         });
 
-        const result = await model.generateContent(prompt);
+        const result = await generateContentWithRetry(model, prompt);
         const jsonText = result.response.text().trim();
         const parsed = JSON.parse(jsonText);
 
@@ -274,7 +275,7 @@ ${context}
             },
         });
 
-        const result = await model.generateContent(prompt);
+        const result = await generateContentWithRetry(model, prompt);
         const jsonText = result.response.text().trim();
         const parsed = JSON.parse(jsonText);
 

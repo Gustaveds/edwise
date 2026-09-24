@@ -10,7 +10,11 @@ services:
     ports:
       - "${DB_PORT:-5432}:5432"
     volumes:
-      - edwise-pgdata:/var/lib/postgresql/data
+      # Bind mount (não volume nomeado do Docker): named volumes vivem dentro do
+      # disco virtual interno do Docker Desktop, que já se mostrou instável em
+      # resets/corrupção após reinícios do Windows/WSL. Um bind mount no próprio
+      # drive do projeto sobrevive a isso, igual aos arquivos do repositório.
+      - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_DATABASE:-edwise}"]
       interval: 3s
@@ -29,9 +33,26 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - edwise-miniodata:/data
+      # Bind mount — ver comentário no serviço `db` sobre por que não usamos
+      # um volume nomeado do Docker aqui.
+      - ./data/minio:/data
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: edwise-redis-dev
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -51,7 +72,3 @@ services:
         echo 'bucket ${MINIO_BUCKET:-edwise} pronto'
       "
     restart: "no"
-
-volumes:
-  edwise-pgdata:
-  edwise-miniodata:

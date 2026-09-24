@@ -52,14 +52,24 @@ const VideoAIDisplay: React.FC<VideoAIDisplayProps> = ({ videoId, isOwner }) => 
             await axios.post(`${config.API_URL}/api/videos/${videoId}/process-ai`, {}, {
                 headers: { Authorization: `Bearer ${token}` }
             });
+            const maxAttempts = 200; // ~10 minutos a cada 3s
+            let attempts = 0;
             const pollInterval = setInterval(async () => {
+                attempts++;
                 const response = await axios.get(`${config.API_URL}/api/videos/${videoId}/ai-data`, {
                     headers: { Authorization: `Bearer ${token}` }
                 });
-                if (response.data.processed) {
+                if (response.data.processed || response.data.status === 'error') {
                     clearInterval(pollInterval);
                     setAiData(response.data);
                     setProcessing(false);
+                    if (response.data.status === 'error') {
+                        setError(response.data.error || 'Falha ao processar vídeo com IA');
+                    }
+                } else if (attempts >= maxAttempts) {
+                    clearInterval(pollInterval);
+                    setProcessing(false);
+                    setError('O processamento está demorando mais que o esperado. Atualize a página em alguns instantes.');
                 }
             }, 3000);
         } catch (err: any) {

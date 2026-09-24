@@ -97,10 +97,11 @@ async function initDb() {
     console.log('✅ Table "comments" created.');
 
     // 8. Videos Table
-    // DROP tables first to ensure schema update (Development only - be careful in prod!)
-    await db.query('DROP TABLE IF EXISTS video_segments CASCADE');
-    await db.query('DROP TABLE IF EXISTS videos CASCADE');
-
+    // NUNCA usar DROP TABLE aqui: este script pode rodar mais de uma vez (ex:
+    // se a checagem de "banco vazio" no start-dev.sh falhar), e um DROP
+    // incondicional já apagou vídeos/transcrições processados em produção-like
+    // local. Evolução de schema deve passar pelo sistema de migrations
+    // (server/migrations/ + scripts/migrate.js), não por aqui.
     await db.query(`
       CREATE TABLE IF NOT EXISTS videos (
         id SERIAL PRIMARY KEY,
