@@ -7,6 +7,7 @@ import FlashcardsModal from './FlashcardsModal';
 import QuizModal from './QuizModal';
 import { useAuth } from '../contexts/AuthContext';
 import { fetchGeneratedQuizzes, deleteGeneratedQuiz } from '../services/quizService';
+import { fetchSavedFlashcardSets, deleteFlashcardSet, FlashcardSet } from '../services/flashcardService';
 import { useDialog } from './ui/ConfirmDialog';
 import { useToast } from './ui/Toast';
 import config from '../config';
@@ -26,6 +27,8 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
     const [showSidebar, setShowSidebar] = useState(true);
     const [isChatModalOpen, setIsChatModalOpen] = useState(false);
     const [isFlashcardsModalOpen, setIsFlashcardsModalOpen] = useState(false);
+    const [savedFlashcardSets, setSavedFlashcardSets] = useState<FlashcardSet[]>([]);
+    const [selectedFlashcardSet, setSelectedFlashcardSet] = useState<FlashcardSet | null>(null);
     const [generatedQuizzes, setGeneratedQuizzes] = useState<any[]>([]);
     const [selectedQuiz, setSelectedQuiz] = useState<QuizQuestion[] | null>(null);
     const [isQuizModalOpen, setIsQuizModalOpen] = useState(false);
@@ -84,11 +87,35 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
 
     useEffect(() => {
         if (activeTab === 'quizzes') loadQuizzes();
+        if (activeTab === 'flashcards') loadFlashcardSets();
     }, [activeTab, course.id]);
 
     const loadQuizzes = async () => {
         const quizzes = await fetchGeneratedQuizzes(course.id);
         setGeneratedQuizzes(quizzes);
+    };
+
+    const loadFlashcardSets = async () => {
+        const sets = await fetchSavedFlashcardSets(course.id);
+        setSavedFlashcardSets(sets);
+    };
+
+    const handleOpenFlashcardSet = (set: FlashcardSet) => {
+        setSelectedFlashcardSet(set);
+        setIsFlashcardsModalOpen(true);
+    };
+
+    const handleDeleteFlashcardSet = async (setId: number) => {
+        const ok = await confirm({
+            title: 'Deletar este conjunto de flashcards?',
+            message: 'Esta ação não pode ser desfeita.',
+            confirmLabel: 'Deletar',
+            tone: 'danger',
+        });
+        if (!ok) return;
+        await deleteFlashcardSet(setId);
+        loadFlashcardSets();
+        toast.success('Flashcards deletados');
     };
 
     const handleOpenQuiz = (quiz: any) => {
@@ -129,14 +156,32 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
 
     const parseTime = (timeStr: string): number | null => {
         if (!timeStr) return null;
+
+        // A IA às vezes gera timestamps malformados com uma unidade duplicada
+        // (ex: "t=0m1m40s" em vez de "t=1m40s"). Somar todas as ocorrências de
+        // cada unidade em vez de pegar só a primeira lida corretamente esse
+        // caso (0m + 1m = 1m), em vez de travar no primeiro "0m" e ignorar o
+        // resto.
+        const sumUnit = (regex: RegExp): number | null => {
+            let total = 0;
+            let found = false;
+            for (const match of timeStr.matchAll(regex)) {
+                total += parseInt(match[1], 10);
+                found = true;
+            }
+            return found ? total : null;
+        };
+
+        const hoursSum = sumUnit(/(\d+)h/g);
+        const minutesSum = sumUnit(/(\d+)m/g);
+        const secondsSum = sumUnit(/(\d+)s/g);
+
         let totalSeconds = 0;
-        const hoursMatch   = timeStr.match(/(\d+)h/);
-        const minutesMatch = timeStr.match(/(\d+)m/);
-        const secondsMatch = timeStr.match(/(\d+)s/);
-        if (hoursMatch)   totalSeconds += parseInt(hoursMatch[1]) * 3600;
-        if (minutesMatch) totalSeconds += parseInt(minutesMatch[1]) * 60;
-        if (secondsMatch) totalSeconds += parseInt(secondsMatch[1]);
-        if (!hoursMatch && !minutesMatch && !secondsMatch && !isNaN(Number(timeStr))) {
+        if (hoursSum !== null) totalSeconds += hoursSum * 3600;
+        if (minutesSum !== null) totalSeconds += minutesSum * 60;
+        if (secondsSum !== null) totalSeconds += secondsSum;
+
+        if (hoursSum === null && minutesSum === null && secondsSum === null && !isNaN(Number(timeStr))) {
             totalSeconds = Number(timeStr);
         }
         return totalSeconds > 0 ? totalSeconds : null;
@@ -318,14 +363,49 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                         )}
 
                         {activeTab === 'flashcards' && (
-                            <div className="text-center text-ink-500 py-10">
-                                <div className="w-12 h-12 mx-auto rounded-2xl bg-brand-50 grid place-items-center mb-4">
-                                    <Brain className="w-5 h-5 text-brand-600" />
-                                </div>
-                                <p className="mb-4 text-sm">Flashcards salvos deste curso</p>
-                                <button onClick={() => setIsFlashcardsModalOpen(true)} className="btn-primary">
-                                    Ver flashcards
-                                </button>
+                            <div>
+                                {savedFlashcardSets.length > 0 ? (
+                                    <div className="space-y-3">
+                                        <h3 className="font-display text-lg font-semibold text-ink-900 mb-3">
+                                            Flashcards gerados ({savedFlashcardSets.length})
+                                        </h3>
+                                        {savedFlashcardSets.map((set) => (
+                                            <div key={set.id} className="rounded-xl ring-1 ring-ink-200 bg-white p-4 flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <h4 className="font-medium text-ink-900 mb-1 truncate">{set.title}</h4>
+                                                    <p className="text-xs text-ink-500">
+                                                        {set.cards.length} cards
+                                                    </p>
+                                                    <p className="text-[11px] font-mono text-ink-400 mt-1">
+                                                        {new Date(set.created_at).toLocaleString('pt-BR')}
+                                                    </p>
+                                                </div>
+                                                <div className="flex items-center gap-2 flex-shrink-0">
+                                                    <button onClick={() => handleOpenFlashcardSet(set)} className="btn-primary !py-1.5 !px-3 text-xs">
+                                                        Abrir
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleDeleteFlashcardSet(set.id)}
+                                                        className="p-2 text-ink-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                        title="Deletar flashcards"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-center text-ink-500 py-10">
+                                        <div className="w-12 h-12 mx-auto rounded-2xl bg-brand-50 grid place-items-center mb-4">
+                                            <Brain className="w-5 h-5 text-brand-600" />
+                                        </div>
+                                        <p className="mb-4 text-sm">Gere flashcards usando o assistente IA</p>
+                                        <button onClick={() => setIsChatModalOpen(true)} className="btn-primary">
+                                            Abrir assistente
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -377,7 +457,17 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                         )}
 
                         {activeTab === 'aidata' && activeContent?.video_id && (
-                            <VideoAIDisplay videoId={activeContent.video_id} isOwner={isProfessor} />
+                            <VideoAIDisplay
+                                videoId={activeContent.video_id}
+                                isOwner={isProfessor}
+                                onSeek={(tempo) => {
+                                    const seconds = parseTime(tempo);
+                                    if (seconds !== null && videoRef.current) {
+                                        videoRef.current.currentTime = seconds;
+                                        videoRef.current.play().catch(e => console.log('Auto-play prevented:', e));
+                                    }
+                                }}
+                            />
                         )}
                     </div>
                 </div>
@@ -447,11 +537,14 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                 onQuizSaved={loadQuizzes}
             />
 
-            <FlashcardsModal
-                courseId={course.id}
-                isOpen={isFlashcardsModalOpen}
-                onClose={() => setIsFlashcardsModalOpen(false)}
-            />
+            {selectedFlashcardSet && (
+                <FlashcardsModal
+                    isOpen={isFlashcardsModalOpen}
+                    onClose={() => setIsFlashcardsModalOpen(false)}
+                    title={selectedFlashcardSet.title}
+                    cards={selectedFlashcardSet.cards}
+                />
+            )}
 
             {selectedQuiz && (
                 <QuizModal

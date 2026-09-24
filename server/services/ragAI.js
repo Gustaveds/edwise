@@ -38,7 +38,18 @@ Relevância: ${(1 - doc.distance).toFixed(3)}`;
             }
         }
 
-        // 4. Build full context string
+        // 4. Sem nenhum documento relevante e sem transcrição de vídeo, não há
+        // material real para basear a geração — deixar passar aqui faz o
+        // Gemini inventar conteúdo genérico (ex: perguntas sobre assuntos que
+        // não têm nada a ver com o curso) em vez de admitir que não tem base.
+        if (relevantDocs.length === 0 && !srtContext) {
+            throw new Error(
+                'Não há material suficiente indexado para este curso ainda. ' +
+                'Envie vídeos ou arquivos com conteúdo relacionado ao tema e aguarde a indexação terminar antes de gerar quiz/flashcards.'
+            );
+        }
+
+        // 5. Build full context string
         const fullContext = `# Contexto RAG (Documentos Relevantes):
 ${contextParts}
 

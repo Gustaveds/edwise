@@ -42,6 +42,14 @@ connection.on('error', (err) => {
 
 export const videoQueue = new Queue('video-processing', { connection });
 
+// Retries para falhas transitórias de infraestrutura (MinIO/DB momentaneamente
+// indisponíveis, etc.) — sem isso, attempts fica em 1 (padrão do BullMQ) e
+// qualquer falha passageira derruba o job de processamento permanentemente.
+export const VIDEO_JOB_OPTIONS = {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 30_000 }, // 30s, 60s, 120s
+};
+
 videoQueue.on('waiting', (job) => {
     console.log(`⏳ [QUEUE] Job ${job.id} aguardando na fila 'video-processing'`);
 });

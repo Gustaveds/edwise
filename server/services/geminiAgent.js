@@ -105,7 +105,7 @@ ${srtContext ? `# SRT dos Vídeos Mais Relevantes:\n${srtContext}` : ''}`;
 
         // 6. Call Gemini
         const model = genAI.getGenerativeModel({
-            model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
+            model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
             systemInstruction: fullSystemPrompt
         });
 
@@ -114,7 +114,7 @@ ${srtContext ? `# SRT dos Vídeos Mais Relevantes:\n${srtContext}` : ''}`;
         const responseText = response.text();
 
         // Log AI interaction to database
-        const usedModel = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+        const usedModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
         if (userId) {
             try {
                 await db.query(

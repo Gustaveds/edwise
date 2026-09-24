@@ -18,9 +18,9 @@ import { generateQuizWithRag, generateFlashcardsWithRag } from './services/ragAI
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import s3Client from './services/minio.js';
-import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand, CreateBucketCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand, CreateBucketCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import fs from 'fs';
-import { videoQueue } from './services/queue.js';
+import { videoQueue, VIDEO_JOB_OPTIONS } from './services/queue.js';
 
 const app = express();
 const upload = multer({ dest: 'uploads/' }); // Temp storage
@@ -663,36 +663,99 @@ app.post('/api/flashcards', authenticateToken, async (req, res) => {
     }
 });
 
-// Get all flashcards for a course
+// Get all flashcards for a course, grouped into sets
+//
+// saved_flashcards stores one row per card (question/answer/source), but the
+// frontend (FlashcardsModal) expects "sets" of the shape
+// { id, title, cards: [{question, answer}], created_at }. Grouping by
+// `source` alone isn't reliable: the chat command defaults the topic to
+// "General" whenever none is typed, so unrelated generation sessions can
+// share the exact same source text. Instead we group by time proximity —
+// all cards from one /api/ai/generate-flashcards call are inserted within
+// milliseconds of each other, while separate sessions are realistically
+// seconds/minutes/days apart — starting a new set whenever the gap since
+// the previous card exceeds 30 seconds.
 app.get('/api/flashcards', authenticateToken, async (req, res) => {
     const { course_id } = req.query;
     try {
         const result = await db.query(
-            'SELECT * FROM saved_flashcards WHERE user_id = $1 AND course_id = $2 ORDER BY created_at DESC',
+            `WITH ordered AS (
+                SELECT *,
+                    created_at - LAG(created_at) OVER (ORDER BY created_at) AS gap
+                FROM saved_flashcards
+                WHERE user_id = $1 AND course_id = $2
+             ),
+             grouped AS (
+                SELECT *,
+                    SUM(CASE WHEN gap IS NULL OR gap > INTERVAL '30 seconds' THEN 1 ELSE 0 END)
+                        OVER (ORDER BY created_at) AS set_group
+                FROM ordered
+             )
+             SELECT
+                MIN(id) AS id,
+                MIN(source) AS title,
+                json_agg(json_build_object('question', question, 'answer', answer) ORDER BY id) AS cards,
+                MIN(created_at) AS created_at
+             FROM grouped
+             GROUP BY set_group
+             ORDER BY MIN(created_at) DESC`,
             [req.user.id, course_id]
         );
-        res.json(result.rows);
+        const sets = result.rows.map(row => ({
+            id: row.id,
+            title: (row.title || 'Flashcards').replace(/^Generated:\s*/i, ''),
+            cards: row.cards,
+            created_at: row.created_at
+        }));
+        res.json(sets);
     } catch (err) {
         console.error('Error fetching flashcards:', err);
         res.status(500).json({ error: 'Failed to fetch flashcards' });
     }
 });
 
-// Delete a flashcard
+// Delete an entire flashcard set (:id is the representative row id returned
+// by GET /api/flashcards — since sets aren't a stored grouping, we recompute
+// the same time-proximity grouping here and delete every row that belongs
+// to the same set as :id, not just that one row).
 app.delete('/api/flashcards/:id', authenticateToken, async (req, res) => {
     const flashcardId = req.params.id;
     try {
-        const result = await db.query(
-            'DELETE FROM saved_flashcards WHERE id = $1 AND user_id = $2 RETURNING *',
+        const cardRow = await db.query(
+            'SELECT course_id FROM saved_flashcards WHERE id = $1 AND user_id = $2',
             [flashcardId, req.user.id]
         );
-        if (result.rows.length === 0) {
+        if (cardRow.rows.length === 0) {
             return res.status(404).json({ error: 'Flashcard not found' });
         }
-        res.json({ success: true, message: 'Flashcard deleted successfully' });
+        const courseId = cardRow.rows[0].course_id;
+
+        const result = await db.query(
+            `WITH ordered AS (
+                SELECT id, created_at,
+                    created_at - LAG(created_at) OVER (ORDER BY created_at) AS gap
+                FROM saved_flashcards
+                WHERE user_id = $1 AND course_id = $2
+             ),
+             grouped AS (
+                SELECT id,
+                    SUM(CASE WHEN gap IS NULL OR gap > INTERVAL '30 seconds' THEN 1 ELSE 0 END)
+                        OVER (ORDER BY created_at) AS set_group
+                FROM ordered
+             ),
+             target AS (
+                SELECT set_group FROM grouped WHERE id = $3
+             )
+             DELETE FROM saved_flashcards
+             WHERE id IN (SELECT id FROM grouped WHERE set_group = (SELECT set_group FROM target))
+             RETURNING id`,
+            [req.user.id, courseId, flashcardId]
+        );
+
+        res.json({ success: true, message: 'Flashcard set deleted successfully', deletedCount: result.rowCount });
     } catch (err) {
-        console.error('Error deleting flashcard:', err);
-        res.status(500).json({ error: 'Failed to delete flashcard' });
+        console.error('Error deleting flashcard set:', err);
+        res.status(500).json({ error: 'Failed to delete flashcard set' });
     }
 });
 
@@ -938,7 +1001,7 @@ app.post('/api/upload/video', authenticateToken, upload.single('video'), async (
             s3Key: fileKey,
             filename: file.originalname,
             contentId: contentId
-        });
+        }, VIDEO_JOB_OPTIONS);
 
         res.json({
             success: true,
@@ -1027,13 +1090,20 @@ app.post('/api/upload/file', authenticateToken, upload.single('file'), async (re
         // 3. Cleanup temp file
         if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
 
-        res.json({
+        // 4. Enqueue for RAG indexing (extraction + embeddings), so quizzes/
+        // flashcards/chat can ground answers in this material too, not only
+        // in video transcripts.
+        await videoQueue.add('process-document', {
+            contentId: contentResult.rows[0].id
+        }, VIDEO_JOB_OPTIONS);
+
+        res.status(202).json({
             success: true,
             content: contentResult.rows[0],
             content_id: contentResult.rows[0].id,
             s3_key: fileKey,
             filename: file.originalname,
-            message: 'Arquivo enviado com sucesso.'
+            message: 'Arquivo enviado com sucesso. Indexação para IA em andamento.'
         });
 
     } catch (err) {
@@ -1125,7 +1195,7 @@ app.post('/api/videos/:id/process-ai', authenticateToken, async (req, res) => {
             s3Key: video.s3_key,
             filename: video.filename,
             contentId: video.content_id
-        });
+        }, VIDEO_JOB_OPTIONS);
 
         res.status(202).json({
             success: true,
@@ -1356,18 +1426,43 @@ app.get('/api/videos/:id/stream', async (req, res) => {
             return res.status(404).json({ error: 'Video file not found' });
         }
 
-        const command = new GetObjectCommand({
-            Bucket: BUCKET_NAME,
-            Key: s3Key,
-        });
+        // O player HTML5 precisa de suporte a Range Requests para permitir
+        // avançar/voltar o vídeo — sem isso, o navegador só consegue baixar
+        // o arquivo inteiro do início, e a barra de progresso fica travada.
+        const head = await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key }));
+        const fileSize = head.ContentLength;
+        const contentType = head.ContentType || 'video/mp4';
+        const range = req.headers.range;
 
-        const response = await s3Client.send(command);
+        if (range) {
+            const [startStr, endStr] = range.replace(/bytes=/, '').split('-');
+            const start = parseInt(startStr, 10);
+            const end = endStr ? parseInt(endStr, 10) : fileSize - 1;
+            const chunkSize = end - start + 1;
 
-        res.setHeader('Content-Type', response.ContentType || 'video/mp4');
-        res.setHeader('Content-Length', response.ContentLength);
+            const response = await s3Client.send(new GetObjectCommand({
+                Bucket: BUCKET_NAME,
+                Key: s3Key,
+                Range: `bytes=${start}-${end}`,
+            }));
 
-        // Pipe the stream to response
-        response.Body.pipe(res);
+            res.writeHead(206, {
+                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                'Accept-Ranges': 'bytes',
+                'Content-Length': chunkSize,
+                'Content-Type': contentType,
+            });
+            response.Body.pipe(res);
+        } else {
+            const response = await s3Client.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key }));
+
+            res.writeHead(200, {
+                'Content-Length': fileSize,
+                'Content-Type': contentType,
+                'Accept-Ranges': 'bytes',
+            });
+            response.Body.pipe(res);
+        }
 
     } catch (err) {
         console.error('Error streaming video:', err);
@@ -1451,6 +1546,7 @@ app.delete('/api/contents/:id', authenticateToken, async (req, res) => {
         }
 
         // Standard content deletion (PDF, Word, text, link, etc.)
+        await db.query("DELETE FROM documents WHERE metadata->>'content_id' = $1", [contentId.toString()]);
         await db.query('DELETE FROM contents WHERE id = $1', [contentId]);
 
         const s3Key = content.data?.s3_key;
