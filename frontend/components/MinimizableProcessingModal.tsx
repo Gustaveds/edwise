@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { X, Minimize2, Maximize2, Loader2, CheckCircle, AlertCircle, Info } from 'lucide-react';
 import config from '../config';
+import ProcessingSteps from './VideoProcessingSteps';
 
 interface ProcessingStatus {
     status: 'processing' | 'ready' | 'error';
@@ -155,6 +156,10 @@ const MinimizableProcessingModal: React.FC<MinimizableProcessingModalProps> = ({
                                     </p>
                                 </div>
                             </div>
+
+                            {!isQueued && (
+                                <ProcessingSteps status={processingStatus?.status} stage={processingStatus?.current_stage} />
+                            )}
 
                             <div className="w-full bg-ink-100 rounded-full h-1.5 overflow-hidden">
                                 <div className={`h-full rounded-full ${isQueued ? 'bg-amber-500' : 'bg-brand-gradient'} animate-pulse`} style={{ width: '100%' }} />

@@ -75,7 +75,7 @@ echo ""
 echo -e "${YELLOW}[3/6] Instalando dependências Node.js...${NC}"
 
 # Install backend dependencies
-cd "$ROOT_DIR/server"
+cd "$ROOT_DIR/backend"
 if [ ! -d "node_modules" ] || [ ! -f "node_modules/.package-lock.json" ]; then
     echo "Instalando dependências do backend..."
     npm install
@@ -125,15 +125,15 @@ fi
 echo ""
 echo -e "${YELLOW}[5/6] Configurando variáveis de ambiente...${NC}"
 
-# Check if .env exists in server
-if [ ! -f "$ROOT_DIR/server/.env" ]; then
-    if [ -f "$ROOT_DIR/server/.env.example" ]; then
+# Check if .env exists in backend
+if [ ! -f "$ROOT_DIR/backend/.env" ]; then
+    if [ -f "$ROOT_DIR/backend/.env.example" ]; then
         echo "Copiando .env.example para .env..."
-        cp "$ROOT_DIR/server/.env.example" "$ROOT_DIR/server/.env"
-        echo -e "${YELLOW}⚠️  Configure suas variáveis em: server/.env${NC}"
+        cp "$ROOT_DIR/backend/.env.example" "$ROOT_DIR/backend/.env"
+        echo -e "${YELLOW}⚠️  Configure suas variáveis em: backend/.env${NC}"
     else
         echo "Criando arquivo .env..."
-        cat > "$ROOT_DIR/server/.env" << 'EOF'
+        cat > "$ROOT_DIR/backend/.env" << 'EOF'
 # Database
 DATABASE_URL=postgresql://postgres:your_db_password@your_db_host:5432/EdWise
 
@@ -195,7 +195,7 @@ echo ""
 echo "Próximos passos:"
 echo ""
 echo "  1. Configure suas variáveis de ambiente:"
-echo -e "     ${YELLOW}nano server/.env${NC}"
+echo -e "     ${YELLOW}nano backend/.env${NC}"
 echo ""
 echo "  2. Inicie a plataforma:"
 echo -e "     ${YELLOW}cd scripts && ./start.sh${NC}"

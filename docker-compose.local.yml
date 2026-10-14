@@ -11,7 +11,7 @@ services:
 
   worker:
     build:
-      context: ./server
+      context: ./backend
       dockerfile: Dockerfile
     container_name: edwise-worker-local
     environment:

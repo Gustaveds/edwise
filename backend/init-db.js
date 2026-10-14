@@ -146,12 +146,16 @@ async function initDb() {
     const adminCheck = await db.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
 
     if (adminCheck.rows.length === 0) {
-      const hashedPassword = await bcrypt.hash('admin123', 10);
+      const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'admin123';
+      if (!process.env.SEED_ADMIN_PASSWORD) {
+        console.warn('⚠️  SEED_ADMIN_PASSWORD não definida — usando senha padrão de desenvolvimento "admin123". Defina essa variável antes de rodar isso contra um banco real.');
+      }
+      const hashedPassword = await bcrypt.hash(adminPassword, 10);
       await db.query(
         'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4)',
         ['Admin User', adminEmail, hashedPassword, 'admin']
       );
-      console.log('✅ Default Admin created: admin@edwise.ai / admin123');
+      console.log(`✅ Default Admin created: admin@edwise.ai / ${adminPassword}`);
     }
 
     // Create Default Course (for dev/testing)

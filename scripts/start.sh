@@ -52,10 +52,10 @@ if [ ! -d "$ROOT_DIR/node_modules" ]; then
     npm install
 fi
 
-# Verificar node_modules no server
-if [ ! -d "$ROOT_DIR/server/node_modules" ]; then
+# Verificar node_modules no backend
+if [ ! -d "$ROOT_DIR/backend/node_modules" ]; then
     echo -e "${YELLOW}  Instalando dependências do backend...${NC}"
-    cd "$ROOT_DIR/server"
+    cd "$ROOT_DIR/backend"
     npm install
     cd "$ROOT_DIR"
 fi
@@ -76,10 +76,10 @@ echo ""
 
 # Inicializar banco de dados (se necessário)
 echo -e "${YELLOW}[2/3] Inicializando banco de dados...${NC}"
-DB_INIT_SCRIPT="$ROOT_DIR/server/init-db.js"
+DB_INIT_SCRIPT="$ROOT_DIR/backend/init-db.js"
 if [ -f "$DB_INIT_SCRIPT" ]; then
     echo -e "${YELLOW}  Executando script de inicialização...${NC}"
-    cd "$ROOT_DIR/server"
+    cd "$ROOT_DIR/backend"
     node init-db.js
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ Banco de dados inicializado${NC}"
@@ -138,8 +138,8 @@ trap cleanup SIGINT SIGTERM
 # Iniciar Backend (porta 3001)
 echo ""
 echo "  ${GREEN}Iniciando Backend (http://localhost:3001)...${NC}"
-echo "Backend CWD: $ROOT_DIR/server"
-cd "$ROOT_DIR/server"
+echo "Backend CWD: $ROOT_DIR/backend"
+cd "$ROOT_DIR/backend"
 ./start-backend.sh >> "$ROOT_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 PIDS+=($BACKEND_PID)

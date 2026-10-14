@@ -4,7 +4,7 @@ services:
   # Backend Monolítico (com Whisper integrado)
   backend:
     image: thiagouni/edwise-backend:${IMAGE_TAG:-latest}
-    build: ./server
+    build: ./backend
     container_name: edwise-backend
     restart: always
     ports:
@@ -62,7 +62,7 @@ services:
   # Frontend
   frontend:
     image: thiagouni/edwise-frontend:${IMAGE_TAG:-latest}
-    build: .
+    build: ./frontend
     container_name: edwise-frontend
     restart: always
     ports:

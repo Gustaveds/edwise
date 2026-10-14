@@ -1,4 +1,4 @@
-import db from './server/db.js';
+import db from './db.js';
 import bcrypt from 'bcrypt';
 
 async function checkUsers() {

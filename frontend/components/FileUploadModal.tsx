@@ -94,7 +94,7 @@ const FileUploadModal: React.FC<FileUploadModalProps> = ({ moduleId, onUploadCom
             onClose={onCancel}
             size="md"
             title="Upload de Arquivo / Material"
-            description="PDF, Word (DOCX), PPTX, TXT ou ZIP — até 100MB."
+            description="PDF, Word, TXT, planilhas, apresentações, compactados ou código-fonte — até 100MB."
             hideClose={uploadState === 'uploading'}
         >
             {error && (
@@ -111,7 +111,7 @@ const FileUploadModal: React.FC<FileUploadModalProps> = ({ moduleId, onUploadCom
                 >
                     <input
                         type="file"
-                        accept=".pdf,.docx,.doc,.txt,.pptx,.xlsx,.zip"
+                        accept=".pdf,.docx,.doc,.txt,.md,.pptx,.ppt,.xlsx,.xls,.csv,.zip,.rar,.7z,.py,.c,.cpp,.h,.hpp,.java,.js,.jsx,.ts,.tsx,.html,.css,.json,.xml,.sql,.sh,.yml,.yaml,.png,.jpg,.jpeg,.gif,.svg"
                         onChange={handleFileChange}
                         className="hidden"
                         id="file-upload-input"
@@ -131,7 +131,7 @@ const FileUploadModal: React.FC<FileUploadModalProps> = ({ moduleId, onUploadCom
                                 <File className="w-5 h-5 text-ink-500" />
                             </div>
                             <span className="text-sm font-medium text-ink-700">Clique para selecionar o arquivo</span>
-                            <span className="text-xs text-ink-500">PDF, DOCX, PPTX, TXT, etc.</span>
+                            <span className="text-xs text-ink-500">PDF, Word, planilhas, código-fonte, imagens, etc.</span>
                         </div>
                     )}
                 </label>

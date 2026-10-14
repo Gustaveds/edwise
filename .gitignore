@@ -5,7 +5,7 @@
 /data/
 
 # Backups de banco de dados (podem conter dados sensíveis)
-server/backups/
+backend/backups/
 
 # Logs
 logs
@@ -25,7 +25,7 @@ dist-ssr
 .env
 .env.*
 !.env.example
-!server/.env.example
+!backend/.env.example
 
 # Editor directories and files
 .vscode/*
@@ -38,7 +38,6 @@ dist-ssr
 *.sln
 *.sw?
 
-*.md
-!README.md
-!DOCUMENTACAO_SISTEMA.md
-!INICIAR_LINUX.md
+# Markdown solto na raiz (notas de trabalho) não é versionado — documentação oficial vive em /docs
+/*.md
+!/README.md

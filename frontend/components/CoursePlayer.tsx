@@ -3,6 +3,7 @@ import { ArrowLeft, Play, FileText, MessageSquare, Info, Edit3, Menu, Sparkles, 
 import { Course, MaterialType, QuizQuestion } from '../types';
 import ChatModal from './ChatModal';
 import VideoAIDisplay from './VideoAIDisplay';
+import YouTubePlayer from './YouTubePlayer';
 import FlashcardsModal from './FlashcardsModal';
 import QuizModal from './QuizModal';
 import { useAuth } from '../contexts/AuthContext';
@@ -204,6 +205,74 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
         return () => window.removeEventListener('hashchange', handleHashChange);
     }, [activeContent]);
 
+    // --- Posição de reprodução (retomar vídeo de onde parou) ---
+    const savedPositionRef = React.useRef<number>(0);
+    const lastProgressSaveRef = React.useRef<number>(0);
+    // A busca da posição salva (rede) e o carregamento dos metadados do
+    // vídeo (local) terminam em ordem imprevisível — o seek só pode
+    // acontecer depois que os DOIS estiverem prontos, então cada um
+    // "tenta" o seek ao terminar, e quem chegar por último é quem executa.
+    const videoMetadataReadyRef = React.useRef<boolean>(false);
+
+    const saveVideoProgress = React.useCallback((position: number) => {
+        if (!activeContent?.id || activeContent.type !== 'video' || !Number.isFinite(position)) return;
+        fetch(`${config.API_URL}/api/progress`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+            body: JSON.stringify({ content_id: activeContent.id, position_seconds: Math.floor(position) })
+        }).catch(err => console.error('Error saving video progress:', err));
+    }, [activeContent]);
+
+    const trySeekToSavedPosition = () => {
+        const hasHashSeek = window.location.hash.includes('&t=');
+        // Só retoma automaticamente se não houver um link com timestamp
+        // específico (ex: clique numa FAQ) e se já tiver avançado o
+        // suficiente pra valer a pena (evita pular os primeiros segundos).
+        if (!hasHashSeek && videoMetadataReadyRef.current && savedPositionRef.current > 5 && videoRef.current) {
+            videoRef.current.currentTime = savedPositionRef.current;
+        }
+    };
+
+    React.useEffect(() => {
+        savedPositionRef.current = 0;
+        videoMetadataReadyRef.current = false;
+        if (activeContent?.type !== 'video' || !activeContent?.id) return;
+
+        fetch(`${config.API_URL}/api/progress/${activeContent.id}`, {
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        })
+            .then(res => res.json())
+            .then(data => {
+                savedPositionRef.current = data?.last_position_seconds || 0;
+                trySeekToSavedPosition();
+            })
+            .catch(err => console.error('Error fetching video progress:', err));
+
+        // Ao trocar de conteúdo (ou sair da página), salva a última posição
+        // conhecida do vídeo que estava tocando.
+        return () => {
+            if (videoRef.current) saveVideoProgress(videoRef.current.currentTime);
+        };
+    }, [activeContent, saveVideoProgress]);
+
+    const handleVideoLoadedMetadata = () => {
+        videoMetadataReadyRef.current = true;
+        trySeekToSavedPosition();
+    };
+
+    const handleVideoTimeUpdate = () => {
+        if (!videoRef.current) return;
+        const now = Date.now();
+        if (now - lastProgressSaveRef.current > 10_000) {
+            lastProgressSaveRef.current = now;
+            saveVideoProgress(videoRef.current.currentTime);
+        }
+    };
+
+    const handleVideoPause = () => {
+        if (videoRef.current) saveVideoProgress(videoRef.current.currentTime);
+    };
+
     const tab = (key: typeof activeTab, label: string, Icon: any) => (
         <button
             onClick={() => setActiveTab(key)}
@@ -256,6 +325,9 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                                         controls
                                         controlsList="nodownload"
                                         src={`${config.API_URL}/api/videos/${activeContent.video_id}/stream?token=${localStorage.getItem('token')}`}
+                                        onLoadedMetadata={handleVideoLoadedMetadata}
+                                        onTimeUpdate={handleVideoTimeUpdate}
+                                        onPause={handleVideoPause}
                                     >
                                         Seu navegador não suporta a tag de vídeo.
                                     </video>
@@ -274,6 +346,12 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                                         <p className="text-sm">Vídeo não disponível</p>
                                     </div>
                                 )
+                            ) : activeContent.type === 'link' && activeContent.data?.videoId ? (
+                                <YouTubePlayer
+                                    key={activeContent.id}
+                                    videoId={activeContent.data.videoId}
+                                    contentId={activeContent.id}
+                                />
                             ) : activeContent.type === 'pdf' || (activeContent.data && activeContent.data.s3_key) ? (
                                 <div className="w-full h-full bg-ink-900 flex flex-col items-center justify-center p-8 text-white text-center">
                                     <div className="w-16 h-16 rounded-2xl bg-red-500/20 text-red-400 grid place-items-center mb-4">
@@ -304,7 +382,9 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                             ) : (
                                 <div className="w-full h-full bg-white text-ink-900 p-8 overflow-y-auto ds-scroll">
                                     <h2 className="font-display text-2xl font-semibold mb-4">{activeContent.title}</h2>
-                                    <div className="prose max-w-none">{activeContent.content}</div>
+                                    <div className="prose max-w-none whitespace-pre-wrap">
+                                        {activeContent.data?.text || activeContent.content}
+                                    </div>
                                 </div>
                             )
                         ) : (

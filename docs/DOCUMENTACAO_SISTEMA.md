@@ -405,7 +405,7 @@ MINIO_BUCKET=edwise
 #### 4.2 Cliente S3 (AWS SDK v3)
 
 ```javascript
-// server/services/minio.js
+// backend/services/minio.js
 import { S3Client } from '@aws-sdk/client-s3';
 
 const s3Client = new S3Client({
@@ -837,7 +837,7 @@ interface Module {
 #### 8.1 Configuração
 
 ```javascript
-// server/services/queue.js
+// backend/services/queue.js
 import { Queue, Worker } from 'bullmq';
 
 const connection = {
@@ -851,7 +851,7 @@ export const videoQueue = new Queue('video-queue', { connection });
 #### 8.2 Worker
 
 ```javascript
-// server/worker.js
+// backend/worker.js
 const worker = new Worker('video-queue', async (job) => {
   const { videoId, s3Key, filename, contentId } = job.data;
   
@@ -1254,7 +1254,7 @@ graph TD
 
 ### 16. Variáveis de Ambiente
 
-#### Backend (`server/.env`)
+#### Backend (`backend/.env`)
 
 ```env
 # Servidor
@@ -1299,7 +1299,7 @@ REACT_APP_API_URL=http://localhost:3001
 docker-compose up db minio -d
 
 # Inicializar schema
-cd server
+cd backend
 node init-db.js
 
 # Iniciar backend

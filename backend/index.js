@@ -23,10 +23,15 @@ import fs from 'fs';
 import { videoQueue, VIDEO_JOB_OPTIONS } from './services/queue.js';
 
 const app = express();
-const upload = multer({ dest: 'uploads/' }); // Temp storage
+const upload = multer({ dest: 'uploads/' }); // Temp storage — usado pelo upload de vídeo (sem limite de tamanho)
+const uploadFile = multer({ dest: 'uploads/', limits: { fileSize: 100 * 1024 * 1024 } }); // PDF/Word/texto/arquivos diversos — 100MB max
 const BUCKET_NAME = 'edwise';
 const PORT = process.env.PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    console.error('❌ JWT_SECRET não definido. Configure essa variável no .env antes de iniciar o servidor.');
+    process.exit(1);
+}
 
 app.use(cors());
 app.use(express.json());
@@ -520,10 +525,9 @@ function sanitizeContentPayload(body) {
 
     // Normalize type to lowercase and map to allowed database types
     let normType = (type || 'text').toString().toLowerCase();
-    if (normType === 'file') normType = 'pdf';
     if (normType === 'assignment') normType = 'text';
 
-    const validTypes = ['pdf', 'video', 'text', 'link', 'word', 'quiz'];
+    const validTypes = ['pdf', 'video', 'text', 'link', 'word', 'quiz', 'file'];
     if (!validTypes.includes(normType)) {
         normType = 'text';
     }
@@ -889,6 +893,51 @@ app.delete('/api/notes/:id', authenticateToken, async (req, res) => {
     }
 });
 
+// --- Video Progress Routes ---
+// Apenas a camada de dados (posição de reprodução por usuário/conteúdo).
+// A trilha do curso / "continue de onde parou" na tela inicial é escopo da
+// MEL-05 (outubro, após o dia 18) — aqui só persistimos e devolvemos a
+// posição, para o player poder retomar o vídeo de onde o aluno parou.
+
+// Save (upsert) the current playback position for a content item
+app.post('/api/progress', authenticateToken, async (req, res) => {
+    const { content_id, position_seconds } = req.body;
+
+    if (!content_id || position_seconds === undefined) {
+        return res.status(400).json({ error: 'content_id and position_seconds are required' });
+    }
+
+    try {
+        const result = await db.query(
+            `INSERT INTO progress (student_id, content_id, last_position_seconds, last_accessed_at)
+             VALUES ($1, $2, $3, NOW())
+             ON CONFLICT (student_id, content_id)
+             DO UPDATE SET last_position_seconds = $3, last_accessed_at = NOW()
+             RETURNING *`,
+            [req.user.id, content_id, Math.max(0, Math.floor(position_seconds))]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('Error saving progress:', err);
+        res.status(500).json({ error: 'Failed to save progress' });
+    }
+});
+
+// Get the saved playback position for a content item
+app.get('/api/progress/:contentId', authenticateToken, async (req, res) => {
+    const { contentId } = req.params;
+    try {
+        const result = await db.query(
+            'SELECT last_position_seconds, last_accessed_at FROM progress WHERE student_id = $1 AND content_id = $2',
+            [req.user.id, contentId]
+        );
+        res.json(result.rows[0] || { last_position_seconds: 0, last_accessed_at: null });
+    } catch (err) {
+        console.error('Error fetching progress:', err);
+        res.status(500).json({ error: 'Failed to fetch progress' });
+    }
+});
+
 // --- Chat History Routes ---
 
 // Save chat message
@@ -1020,7 +1069,7 @@ app.post('/api/upload/video', authenticateToken, upload.single('video'), async (
 
 // --- File / Document Upload Route (PDF, DOCX, TXT, etc.) ---
 
-app.post('/api/upload/file', authenticateToken, upload.single('file'), async (req, res) => {
+app.post('/api/upload/file', authenticateToken, uploadFile.single('file'), async (req, res) => {
     if (req.user.role !== 'professor' && req.user.role !== 'admin') return res.sendStatus(403);
 
     const file = req.file;
@@ -1041,15 +1090,21 @@ app.post('/api/upload/file', authenticateToken, upload.single('file'), async (re
     }
     title = sanitizeTitle(title);
 
-    // Determine type (database allows 'pdf', 'word', 'text', 'link', 'video', 'quiz')
-    let contentType = 'pdf';
+    // Determine type (database allows 'pdf', 'word', 'text', 'link', 'video',
+    // 'quiz', 'file'). Only pdf/word/text are consumed pela IA (resumo,
+    // quiz, flashcards) — qualquer outro formato (código-fonte, planilhas,
+    // compactados, etc.) é só armazenado/baixável, sem indexação.
+    const AI_CONSUMABLE_TYPES = ['pdf', 'word', 'text'];
+    let contentType = 'file';
     const ext = path.extname(file.originalname).toLowerCase();
     const mime = (file.mimetype || '').toLowerCase();
     if (ext === '.docx' || ext === '.doc' || mime.includes('word')) {
         contentType = 'word';
     } else if (ext === '.pdf' || mime.includes('pdf')) {
         contentType = 'pdf';
-    } else if (type && ['pdf', 'word', 'text'].includes(type.toLowerCase())) {
+    } else if (ext === '.txt' || mime === 'text/plain') {
+        contentType = 'text';
+    } else if (type && AI_CONSUMABLE_TYPES.includes(type.toLowerCase())) {
         contentType = type.toLowerCase();
     }
 
@@ -1092,10 +1147,15 @@ app.post('/api/upload/file', authenticateToken, upload.single('file'), async (re
 
         // 4. Enqueue for RAG indexing (extraction + embeddings), so quizzes/
         // flashcards/chat can ground answers in this material too, not only
-        // in video transcripts.
-        await videoQueue.add('process-document', {
-            contentId: contentResult.rows[0].id
-        }, VIDEO_JOB_OPTIONS);
+        // in video transcripts. Só faz sentido (e só funciona) para os tipos
+        // que documentAI.js sabe extrair texto — outros formatos (código,
+        // planilhas, zip, etc.) ficam só armazenados, sem indexação.
+        const willIndex = AI_CONSUMABLE_TYPES.includes(contentType);
+        if (willIndex) {
+            await videoQueue.add('process-document', {
+                contentId: contentResult.rows[0].id
+            }, VIDEO_JOB_OPTIONS);
+        }
 
         res.status(202).json({
             success: true,
@@ -1103,7 +1163,9 @@ app.post('/api/upload/file', authenticateToken, upload.single('file'), async (re
             content_id: contentResult.rows[0].id,
             s3_key: fileKey,
             filename: file.originalname,
-            message: 'Arquivo enviado com sucesso. Indexação para IA em andamento.'
+            message: willIndex
+                ? 'Arquivo enviado com sucesso. Indexação para IA em andamento.'
+                : 'Arquivo enviado com sucesso.'
         });
 
     } catch (err) {
@@ -1966,6 +2028,16 @@ app.post('/api/agent', async (req, res) => {
         console.error('Error in agent endpoint:', err);
         res.status(500).json({ error: 'Internal Server Error', details: err.message });
     }
+});
+
+// Error handler para uploads (precisa vir depois de todas as rotas que usam
+// multer). Sem isso, um arquivo maior que o limite configurado derrubava a
+// requisição numa página de erro genérica em vez de uma resposta JSON clara.
+app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'Arquivo maior que o limite permitido (100MB).' });
+    }
+    next(err);
 });
 
 app.listen(PORT, '0.0.0.0', () => {

@@ -11,6 +11,7 @@ import VideoForm from './forms/VideoForm';
 import TextForm from './forms/TextForm';
 import QuizForm from './forms/QuizForm';
 import FileForm from './forms/FileForm';
+import LinkForm from './forms/LinkForm';
 import VideoUpload from './VideoUpload';
 import FileUploadModal from './FileUploadModal';
 import config from '../config';
@@ -227,7 +228,14 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                 body: JSON.stringify({
-                    title: data.title, type: data.type, data: data.content, description: data.description
+                    title: data.title,
+                    type: data.type,
+                    // Formulários como Texto/Quiz mandam o payload em `content`
+                    // (string); FileForm e LinkForm mandam um objeto em `data`.
+                    // Sem checar os dois, salvar um link/arquivo existente
+                    // apagava silenciosamente seus metadados (URL, s3_key...).
+                    data: data.data !== undefined ? data.data : data.content,
+                    description: data.description
                 })
             });
             if (data.type === MaterialType.Quiz && data.questions) {
@@ -423,6 +431,9 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
             case 'PDF':
             case 'WORD':
                 return <FileForm {...commonProps} />;
+            case MaterialType.Link:
+            case 'LINK':
+                return <LinkForm {...commonProps} />;
             default:
                 return <div className="p-8 text-ink-600">Editor para <strong>{content.type}</strong> em desenvolvimento.</div>;
         }
@@ -752,7 +763,9 @@ const CourseEditor: React.FC<CourseEditorProps> = ({ course, onSave, onCancel })
                         const newContent: any = {
                             id: fileData.id.toString(),
                             title: fileData.title,
-                            type: fileData.type === 'word' ? MaterialType.File : MaterialType.PDF,
+                            type: fileData.type === 'pdf' ? MaterialType.PDF
+                                : fileData.type === 'text' ? MaterialType.Text
+                                : MaterialType.File, // word, file (código/planilha/zip/etc.)
                             content: '',
                             description: '',
                             data: fileData.data,

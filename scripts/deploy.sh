@@ -119,7 +119,7 @@ echo -e "${YELLOW}🔧 Building backend (latest + ${CURRENT_TAG})...${NC}"
 docker build \
     -t thiagouni/edwise-backend:latest \
     -t thiagouni/edwise-backend:${CURRENT_TAG} \
-    server/
+    backend/
 
 # Build frontend com múltiplas tags  
 echo -e "${YELLOW}🎨 Building frontend (latest + ${CURRENT_TAG})...${NC}"
@@ -127,7 +127,7 @@ docker build \
     --build-arg VITE_API_URL=https://apiedwise.tgbia.com \
     -t thiagouni/edwise-frontend:latest \
     -t thiagouni/edwise-frontend:${CURRENT_TAG} \
-    .
+    frontend/
 
 # ==========================================
 # AUTENTICAÇÃO NO DOCKER HUB

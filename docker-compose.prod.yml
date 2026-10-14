@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # Backend Principal
   backend:
-    build: ./server
+    build: ./backend
     container_name: edwise-backend
     restart: always
     ports:
@@ -104,7 +104,7 @@ services:
 
   # Frontend
   frontend:
-    build: .
+    build: ./frontend
     container_name: edwise-frontend
     restart: always
     ports:

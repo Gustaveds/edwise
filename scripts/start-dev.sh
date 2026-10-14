@@ -117,13 +117,13 @@ done
 
 # ─── 4. Dependências ────────────────────────────────────────
 echo -e "${YELLOW}[3/5] Verificando dependências...${NC}"
-if [ ! -d "$ROOT_DIR/node_modules" ]; then
+if [ ! -d "$ROOT_DIR/frontend/node_modules" ]; then
     echo -e "${YELLOW}  instalando deps do frontend...${NC}"
-    (cd "$ROOT_DIR" && npm install)
+    (cd "$ROOT_DIR/frontend" && npm install)
 fi
-if [ ! -d "$ROOT_DIR/server/node_modules" ]; then
+if [ ! -d "$ROOT_DIR/backend/node_modules" ]; then
     echo -e "${YELLOW}  instalando deps do backend...${NC}"
-    (cd "$ROOT_DIR/server" && npm install)
+    (cd "$ROOT_DIR/backend" && npm install)
 fi
 echo -e "${GREEN}  ✓ deps OK${NC}"
 
@@ -143,16 +143,16 @@ USERS_EXISTS=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$D
 
 if [ "$USERS_EXISTS" != "t" ]; then
     echo -e "${YELLOW}  banco vazio — rodando init-db.js (tabelas base + admin padrão)${NC}"
-    (cd "$ROOT_DIR/server" && node init-db.js)
+    (cd "$ROOT_DIR/backend" && node init-db.js)
 else
     echo -e "${GREEN}  ✓ schema base já existe — pulando init-db${NC}"
 fi
 
 echo -e "${YELLOW}  rodando migrations pendentes...${NC}"
-(cd "$ROOT_DIR" && node server/scripts/migrate.js up)
+(cd "$ROOT_DIR" && node backend/scripts/migrate.js up)
 
 echo -e "${YELLOW}  garantindo usuários de teste (admin/professor/student)...${NC}"
-(cd "$ROOT_DIR/server" && node create-test-users.js)
+(cd "$ROOT_DIR/backend" && node create-test-users.js)
 
 # ─── 6. Sobe backend + frontend (com hot reload) ────────────
 echo -e "${YELLOW}[5/5] Iniciando serviços (hot reload ativo)...${NC}"
@@ -178,21 +178,21 @@ trap cleanup SIGINT SIGTERM
 
 # Backend (node --watch — reinicia automaticamente em alterações)
 (
-    cd "$ROOT_DIR/server" || exit 1
+    cd "$ROOT_DIR/backend" || exit 1
     node --watch index.js
 ) > "$ROOT_DIR/backend.log" 2>&1 &
 PIDS+=($!)
 
 # Worker (consome a fila BullMQ — FFmpeg -> Whisper -> Gemini)
 (
-    cd "$ROOT_DIR/server" || exit 1
+    cd "$ROOT_DIR/backend" || exit 1
     node --watch worker.js
 ) > "$ROOT_DIR/worker.log" 2>&1 &
 PIDS+=($!)
 
 # Frontend (Vite dev — HMR ativo)
 (
-    cd "$ROOT_DIR" || exit 1
+    cd "$ROOT_DIR/frontend" || exit 1
     npm run dev
 ) > "$ROOT_DIR/frontend.log" 2>&1 &
 PIDS+=($!)
