@@ -12,6 +12,9 @@ import { fetchSavedFlashcardSets, deleteFlashcardSet, FlashcardSet } from '../se
 import { useDialog } from './ui/ConfirmDialog';
 import { useToast } from './ui/Toast';
 import config from '../config';
+import { parseTimeLabel } from '../utils/timeParsing';
+import VideoChapters from './VideoChapters';
+import SyncedTranscript from './SyncedTranscript';
 
 interface CoursePlayerProps {
     course: Course;
@@ -24,7 +27,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
     const toast = useToast();
     const [activeModuleId, setActiveModuleId] = useState<string | number | null>(null);
     const [activeContent, setActiveContent] = useState<any>(null);
-    const [activeTab, setActiveTab] = useState<'info' | 'aidata' | 'comments' | 'notes' | 'flashcards' | 'quizzes'>('info');
+    const [activeTab, setActiveTab] = useState<'info' | 'aidata' | 'comments' | 'notes' | 'flashcards' | 'quizzes' | 'transcript'>('info');
     const [showSidebar, setShowSidebar] = useState(true);
     const [isChatModalOpen, setIsChatModalOpen] = useState(false);
     const [isFlashcardsModalOpen, setIsFlashcardsModalOpen] = useState(false);
@@ -155,45 +158,12 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
 
     const videoRef = React.useRef<HTMLVideoElement>(null);
 
-    const parseTime = (timeStr: string): number | null => {
-        if (!timeStr) return null;
-
-        // A IA às vezes gera timestamps malformados com uma unidade duplicada
-        // (ex: "t=0m1m40s" em vez de "t=1m40s"). Somar todas as ocorrências de
-        // cada unidade em vez de pegar só a primeira lida corretamente esse
-        // caso (0m + 1m = 1m), em vez de travar no primeiro "0m" e ignorar o
-        // resto.
-        const sumUnit = (regex: RegExp): number | null => {
-            let total = 0;
-            let found = false;
-            for (const match of timeStr.matchAll(regex)) {
-                total += parseInt(match[1], 10);
-                found = true;
-            }
-            return found ? total : null;
-        };
-
-        const hoursSum = sumUnit(/(\d+)h/g);
-        const minutesSum = sumUnit(/(\d+)m/g);
-        const secondsSum = sumUnit(/(\d+)s/g);
-
-        let totalSeconds = 0;
-        if (hoursSum !== null) totalSeconds += hoursSum * 3600;
-        if (minutesSum !== null) totalSeconds += minutesSum * 60;
-        if (secondsSum !== null) totalSeconds += secondsSum;
-
-        if (hoursSum === null && minutesSum === null && secondsSum === null && !isNaN(Number(timeStr))) {
-            totalSeconds = Number(timeStr);
-        }
-        return totalSeconds > 0 ? totalSeconds : null;
-    };
-
     React.useEffect(() => {
         const handleHashChange = () => {
             const hash = window.location.hash;
             if (hash && hash.includes('&t=')) {
                 const timeParam = hash.split('&t=')[1];
-                const seconds = parseTime(timeParam);
+                const seconds = parseTimeLabel(timeParam);
                 if (seconds !== null && videoRef.current) {
                     videoRef.current.currentTime = seconds;
                     videoRef.current.play().catch(e => console.log('Auto-play prevented:', e));
@@ -258,10 +228,12 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
     const handleVideoLoadedMetadata = () => {
         videoMetadataReadyRef.current = true;
         trySeekToSavedPosition();
+        if (videoRef.current) setVideoDuration(videoRef.current.duration);
     };
 
     const handleVideoTimeUpdate = () => {
         if (!videoRef.current) return;
+        setVideoCurrentTime(videoRef.current.currentTime);
         const now = Date.now();
         if (now - lastProgressSaveRef.current > 10_000) {
             lastProgressSaveRef.current = now;
@@ -272,6 +244,37 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
     const handleVideoPause = () => {
         if (videoRef.current) saveVideoProgress(videoRef.current.currentTime);
     };
+
+    const seekToSeconds = (seconds: number) => {
+        if (!videoRef.current) return;
+        videoRef.current.currentTime = seconds;
+        videoRef.current.play().catch(e => console.log('Auto-play prevented:', e));
+    };
+
+    // --- Capítulos (MEL-01) e transcrição sincronizada (MEL-02) ---
+    // Mesmo endpoint já usado pela aba "Dados IA" (professor), só que
+    // acessível a qualquer um assistindo à aula, já que marcadores de
+    // capítulo e transcrição pesquisável são recursos do aluno, não do
+    // painel administrativo da IA.
+    const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+    const [videoDuration, setVideoDuration] = useState(0);
+    const [videoAiData, setVideoAiData] = useState<{ faqs: { pergunta: string; tempo: string }[]; transcription: string | null }>({ faqs: [], transcription: null });
+
+    React.useEffect(() => {
+        setVideoAiData({ faqs: [], transcription: null });
+        if (!activeContent?.video_id) return;
+
+        fetch(`${config.API_URL}/api/videos/${activeContent.video_id}/ai-data`, {
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        })
+            .then(res => res.json())
+            .then(data => {
+                if (data?.processed) {
+                    setVideoAiData({ faqs: data.faqs || [], transcription: data.transcription || null });
+                }
+            })
+            .catch(err => console.error('Error fetching video AI data:', err));
+    }, [activeContent?.video_id]);
 
     const tab = (key: typeof activeTab, label: string, Icon: any) => (
         <button
@@ -392,9 +395,20 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                         )}
                     </div>
 
+                    {/* Capítulos (MEL-01) — marcadores + lista clicável logo abaixo do vídeo */}
+                    {activeContent?.video_id && (
+                        <VideoChapters
+                            faqs={videoAiData.faqs}
+                            duration={videoDuration}
+                            currentTime={videoCurrentTime}
+                            onSeek={seekToSeconds}
+                        />
+                    )}
+
                     {/* Bottom tabs */}
                     <div className="border-t border-ink-200 flex border-b border-ink-200 px-2 overflow-x-auto ds-scroll">
                         {tab('info',       'Informações', Info)}
+                        {activeContent?.video_id && tab('transcript', 'Transcrição', FileText)}
                         {tab('comments',   'Comentários', MessageSquare)}
                         {tab('notes',      'Anotações',   Edit3)}
                         {tab('flashcards', 'Flashcards',  Brain)}
@@ -416,6 +430,21 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                                     </div>
                                 )}
                             </div>
+                        )}
+
+                        {activeTab === 'transcript' && activeContent?.video_id && (
+                            videoAiData.transcription ? (
+                                <SyncedTranscript
+                                    transcription={videoAiData.transcription}
+                                    currentTime={videoCurrentTime}
+                                    onSeek={seekToSeconds}
+                                />
+                            ) : (
+                                <div className="text-center text-ink-500 py-10">
+                                    <FileText className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                                    <p>Transcrição ainda não disponível para esta aula.</p>
+                                </div>
+                            )
                         )}
 
                         {activeTab === 'comments' && (
@@ -541,7 +570,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                                 videoId={activeContent.video_id}
                                 isOwner={isProfessor}
                                 onSeek={(tempo) => {
-                                    const seconds = parseTime(tempo);
+                                    const seconds = parseTimeLabel(tempo);
                                     if (seconds !== null && videoRef.current) {
                                         videoRef.current.currentTime = seconds;
                                         videoRef.current.play().catch(e => console.log('Auto-play prevented:', e));
