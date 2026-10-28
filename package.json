@@ -5,6 +5,8 @@
   "description": "Scripts de conveniência cross-cutting (infra/dev). O frontend vive em /frontend e o backend em /backend, cada um com seu próprio package.json.",
   "scripts": {
     "start:dev": "bash scripts/start-dev.sh",
+    "test": "bash scripts/run-tests.sh",
+    "test:unit": "bash scripts/run-tests.sh --unit",
     "db:up": "docker compose -f docker-compose.dev.yml up -d db",
     "db:down": "docker compose -f docker-compose.dev.yml down",
     "db:logs": "docker compose -f docker-compose.dev.yml logs -f db",

@@ -1,6 +1,9 @@
 # Docker local credentials
 .docker/
 
+# Cronograma pessoal de acompanhamento (não é documentação oficial do projeto)
+/Cronograma Edwise.html
+
 # Dados persistidos dos containers de dev (Postgres/MinIO/Redis) — ver docker-compose.dev.yml
 /data/
 

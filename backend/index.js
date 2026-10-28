@@ -899,7 +899,7 @@ app.delete('/api/notes/:id', authenticateToken, async (req, res) => {
 // MEL-05 (outubro, após o dia 18) — aqui só persistimos e devolvemos a
 // posição, para o player poder retomar o vídeo de onde o aluno parou.
 
-// Save (upsert) the current playback position for a content item
+// salva o posicao atual do playback
 app.post('/api/progress', authenticateToken, async (req, res) => {
     const { content_id, position_seconds } = req.body;
 

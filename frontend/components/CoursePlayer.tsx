@@ -321,7 +321,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                                 activeContent.video_id ? (
                                     <video
                                         ref={videoRef}
-                                        className="w-full h-full"
+                                        className="absolute inset-0 w-full h-full object-contain"
                                         controls
                                         controlsList="nodownload"
                                         src={`${config.API_URL}/api/videos/${activeContent.video_id}/stream?token=${localStorage.getItem('token')}`}
