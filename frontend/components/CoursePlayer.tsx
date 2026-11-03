@@ -15,13 +15,16 @@ import config from '../config';
 import { parseTimeLabel } from '../utils/timeParsing';
 import VideoChapters from './VideoChapters';
 import SyncedTranscript from './SyncedTranscript';
+import ProgressRing from './ProgressRing';
+import { Lock, CheckCircle2, Circle, PlayCircle } from 'lucide-react';
 
 interface CoursePlayerProps {
     course: Course;
     onBack: () => void;
+    initialContentId?: string | number;
 }
 
-const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
+const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack, initialContentId }) => {
     const { user } = useAuth();
     const { confirm } = useDialog();
     const toast = useToast();
@@ -83,11 +86,59 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
     }];
 
     React.useEffect(() => {
-        if (modules.length > 0 && modules[0].contents && modules[0].contents.length > 0 && !activeContent) {
+        if (activeContent || modules.length === 0) return;
+
+        // Se viemos do cartão "continue de onde parou", abre direto na
+        // última aula assistida em vez da primeira do curso.
+        if (initialContentId !== undefined) {
+            for (const module of modules) {
+                const found = module.contents?.find((c: any) => String(c.id) === String(initialContentId));
+                if (found) {
+                    setActiveContent(found);
+                    setActiveModuleId(module.id);
+                    return;
+                }
+            }
+        }
+
+        if (modules[0].contents && modules[0].contents.length > 0) {
             setActiveContent(modules[0].contents[0]);
             setActiveModuleId(modules[0].id);
         }
-    }, [modules]);
+    }, [modules, initialContentId]);
+
+    // --- Progresso por conteúdo do curso (MEL-05) ---
+    // Alimenta os estados visuais da lista de módulos (concluído / em
+    // andamento / não iniciado) e o anel de progresso do curso.
+    const [courseProgress, setCourseProgress] = useState<Record<string, { status: string | null; last_position_seconds: number }>>({});
+
+    React.useEffect(() => {
+        fetch(`${config.API_URL}/api/courses/${course.id}/progress`, {
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        })
+            .then(res => res.json())
+            .then((rows: any[]) => {
+                const map: Record<string, { status: string | null; last_position_seconds: number }> = {};
+                (rows || []).forEach(row => {
+                    map[String(row.content_id)] = { status: row.status, last_position_seconds: row.last_position_seconds };
+                });
+                setCourseProgress(map);
+            })
+            .catch(err => console.error('Error fetching course progress:', err));
+    }, [course.id]);
+
+    const allContents = modules.flatMap((m: any) => m.contents || []);
+    const totalContentCount = allContents.length;
+    const completedContentCount = allContents.filter((c: any) => courseProgress[String(c.id)]?.status === 'completed').length;
+    const courseProgressPercent = totalContentCount > 0 ? (completedContentCount / totalContentCount) * 100 : 0;
+
+    // Conteúdo liberado por drip (release_at): bloqueado até a data chegar.
+    // Professor/admin sempre enxergam tudo, já que gerenciam o curso.
+    const isContentLocked = (content: any): boolean => {
+        if (isProfessor) return false;
+        if (!content.release_at) return false;
+        return new Date(content.release_at).getTime() > Date.now();
+    };
 
     useEffect(() => {
         if (activeTab === 'quizzes') loadQuizzes();
@@ -184,13 +235,22 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
     // "tenta" o seek ao terminar, e quem chegar por último é quem executa.
     const videoMetadataReadyRef = React.useRef<boolean>(false);
 
-    const saveVideoProgress = React.useCallback((position: number) => {
+    const saveVideoProgress = React.useCallback((position: number, completed: boolean = false) => {
         if (!activeContent?.id || activeContent.type !== 'video' || !Number.isFinite(position)) return;
+        const contentId = activeContent.id;
         fetch(`${config.API_URL}/api/progress`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-            body: JSON.stringify({ content_id: activeContent.id, position_seconds: Math.floor(position) })
-        }).catch(err => console.error('Error saving video progress:', err));
+            body: JSON.stringify({ content_id: contentId, position_seconds: Math.floor(position), completed })
+        })
+            .then(res => res.json())
+            .then(saved => {
+                setCourseProgress(prev => ({
+                    ...prev,
+                    [String(contentId)]: { status: saved?.status ?? (completed ? 'completed' : 'in_progress'), last_position_seconds: Math.floor(position) }
+                }));
+            })
+            .catch(err => console.error('Error saving video progress:', err));
     }, [activeContent]);
 
     const trySeekToSavedPosition = () => {
@@ -245,10 +305,59 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
         if (videoRef.current) saveVideoProgress(videoRef.current.currentTime);
     };
 
+    const handleVideoEnded = () => {
+        if (videoRef.current) saveVideoProgress(videoRef.current.currentTime, true);
+    };
+
     const seekToSeconds = (seconds: number) => {
         if (!videoRef.current) return;
         videoRef.current.currentTime = seconds;
         videoRef.current.play().catch(e => console.log('Auto-play prevented:', e));
+    };
+
+    // Marca/desmarca manualmente um conteúdo como concluído (MEL-05) — serve
+    // tanto para vídeo quanto para qualquer outro tipo (texto, PDF, link,
+    // quiz), já que esses não têm como detectar "terminou de assistir"
+    // sozinhos. Ao desmarcar: se já havia posição salva (vídeo parcialmente
+    // assistido), volta para "em andamento"; senão, remove o progresso de
+    // vez, voltando para "não iniciado".
+    const toggleContentCompletion = async (content: any) => {
+        const current = courseProgress[String(content.id)];
+        const token = localStorage.getItem('token');
+
+        try {
+            if (current?.status === 'completed') {
+                if (current.last_position_seconds > 0) {
+                    const res = await fetch(`${config.API_URL}/api/progress`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                        body: JSON.stringify({ content_id: content.id, position_seconds: current.last_position_seconds, completed: false, force: true })
+                    });
+                    const saved = await res.json();
+                    setCourseProgress(prev => ({ ...prev, [String(content.id)]: { status: saved.status, last_position_seconds: saved.last_position_seconds } }));
+                } else {
+                    await fetch(`${config.API_URL}/api/progress/${content.id}`, {
+                        method: 'DELETE',
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    setCourseProgress(prev => {
+                        const next = { ...prev };
+                        delete next[String(content.id)];
+                        return next;
+                    });
+                }
+            } else {
+                const res = await fetch(`${config.API_URL}/api/progress`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                    body: JSON.stringify({ content_id: content.id, position_seconds: current?.last_position_seconds || 0, completed: true })
+                });
+                const saved = await res.json();
+                setCourseProgress(prev => ({ ...prev, [String(content.id)]: { status: saved.status, last_position_seconds: saved.last_position_seconds } }));
+            }
+        } catch (err) {
+            console.error('Error toggling content completion:', err);
+        }
     };
 
     // --- Capítulos (MEL-01) e transcrição sincronizada (MEL-02) ---
@@ -331,6 +440,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                                         onLoadedMetadata={handleVideoLoadedMetadata}
                                         onTimeUpdate={handleVideoTimeUpdate}
                                         onPause={handleVideoPause}
+                                        onEnded={handleVideoEnded}
                                     >
                                         Seu navegador não suporta a tag de vídeo.
                                     </video>
@@ -583,12 +693,14 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
 
                 {/* Right: course timeline */}
                 <aside className={`surface flex flex-col self-start ${showSidebar ? '' : 'hidden lg:flex'}`}>
-                    <div className="p-5 border-b border-ink-200">
-                        <h3 className="font-display font-semibold text-base text-ink-900">Conteúdo do curso</h3>
-                        <div className="w-full bg-ink-100 h-1.5 rounded-full mt-3 overflow-hidden">
-                            <div className="bg-brand-gradient h-full w-1/3" />
+                    <div className="p-5 border-b border-ink-200 flex items-center gap-4">
+                        <ProgressRing percent={courseProgressPercent} />
+                        <div>
+                            <h3 className="font-display font-semibold text-base text-ink-900">Conteúdo do curso</h3>
+                            <p className="text-[11px] font-mono text-ink-500 mt-0.5">
+                                {completedContentCount} de {totalContentCount} concluídos
+                            </p>
                         </div>
-                        <p className="text-[11px] font-mono text-ink-500 mt-1.5">33% Concluído</p>
                     </div>
                     <div className="max-h-[600px] overflow-y-auto ds-scroll">
                         {modules.map((module: any) => (
@@ -599,26 +711,55 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ course, onBack }) => {
                                 <div>
                                     {module.contents?.map((content: any) => {
                                         const active = activeContent?.id === content.id;
+                                        const locked = isContentLocked(content);
+                                        const status = courseProgress[String(content.id)]?.status;
                                         return (
-                                            <button
+                                            <div
                                                 key={content.id}
-                                                onClick={() => handleContentSelect(content, module.id)}
-                                                className={`w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-ink-50/60 transition-colors border-l-2
+                                                className={`w-full flex items-start gap-1 pr-2 transition-colors border-l-2
+                                                    ${locked ? 'opacity-50' : ''}
                                                     ${active ? 'bg-brand-50/60 border-brand-500' : 'border-transparent'}`}
                                             >
-                                                <div className="mt-0.5 flex-shrink-0">
-                                                    {content.type === 'video'
-                                                        ? <Play className={`w-4 h-4 ${active ? 'text-brand-600' : 'text-ink-400'}`} />
-                                                        : <FileText className={`w-4 h-4 ${active ? 'text-brand-600' : 'text-ink-400'}`} />}
-                                                </div>
-                                                <div className="flex-1 min-w-0">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => !locked && toggleContentCompletion(content)}
+                                                    disabled={locked}
+                                                    title={locked ? undefined : status === 'completed' ? 'Desmarcar conclusão' : 'Marcar como concluído'}
+                                                    className={`flex-shrink-0 flex flex-col items-center gap-1 px-3 py-3 ${locked ? 'cursor-not-allowed' : 'hover:bg-ink-100/60'}`}
+                                                >
+                                                    {locked ? (
+                                                        <Lock className="w-4 h-4 text-ink-400" />
+                                                    ) : status === 'completed' ? (
+                                                        <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                                                    ) : status === 'in_progress' ? (
+                                                        <PlayCircle className={`w-4 h-4 ${active ? 'text-brand-600' : 'text-brand-400'}`} />
+                                                    ) : (
+                                                        <Circle className={`w-4 h-4 ${active ? 'text-brand-600' : 'text-ink-300'}`} />
+                                                    )}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => !locked && handleContentSelect(content, module.id)}
+                                                    disabled={locked}
+                                                    className={`flex-1 min-w-0 text-left py-3 pr-1 ${locked ? 'cursor-not-allowed' : 'hover:bg-ink-50/60'}`}
+                                                >
                                                     <p className={`text-sm truncate ${active ? 'text-brand-700 font-semibold' : 'text-ink-800'}`}>
                                                         {content.title}
                                                     </p>
-                                                    <p className="text-[11px] font-mono text-ink-400 mt-0.5">10 min</p>
-                                                </div>
-                                                {active && <ChevronRight className="w-4 h-4 text-brand-500 flex-shrink-0 mt-0.5" />}
-                                            </button>
+                                                    <span
+                                                        role={locked ? undefined : 'button'}
+                                                        onClick={(e) => { e.stopPropagation(); if (!locked) toggleContentCompletion(content); }}
+                                                        className={`inline-block text-[11px] font-mono mt-0.5 ${locked ? 'text-ink-400' : 'text-ink-400 hover:text-brand-600 hover:underline'}`}
+                                                    >
+                                                        {locked
+                                                            ? `Disponível em ${new Date(content.release_at).toLocaleDateString('pt-BR')}`
+                                                            : status === 'completed' ? 'Concluído'
+                                                            : status === 'in_progress' ? 'Em andamento'
+                                                            : 'Não iniciado'}
+                                                    </span>
+                                                </button>
+                                                {active && !locked && <ChevronRight className="w-4 h-4 text-brand-500 flex-shrink-0 mt-3.5" />}
+                                            </div>
                                         );
                                     })}
                                 </div>

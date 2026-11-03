@@ -263,6 +263,7 @@ app.get('/api/courses/:id', authenticateToken, async (req, res) => {
             SELECT DISTINCT ON (c.id)
                 c.id, c.module_id, c.title, c.type, c.description, c.data,
                 c.order_index, c.is_published, c.created_at, c.settings,
+                c.release_at, c.release_after_days,
                 v.id as video_id, v.status as video_status
             FROM contents c
             LEFT JOIN videos v ON c.id = v.content_id
@@ -901,20 +902,33 @@ app.delete('/api/notes/:id', authenticateToken, async (req, res) => {
 
 // salva o posicao atual do playback
 app.post('/api/progress', authenticateToken, async (req, res) => {
-    const { content_id, position_seconds } = req.body;
+    const { content_id, position_seconds, completed, force } = req.body;
 
     if (!content_id || position_seconds === undefined) {
         return res.status(400).json({ error: 'content_id and position_seconds are required' });
     }
 
+    const status = completed ? 'completed' : 'in_progress';
+    // O acompanhamento automático (onTimeUpdate/onPause) nunca deve
+    // "desmarcar" um conteúdo concluído só porque o aluno voltou um trecho
+    // do vídeo. Mas o botão de marcar/desmarcar manualmente (MEL-05) é uma
+    // ação explícita do usuário e precisa poder reverter isso — por isso
+    // passa force=true, que ignora essa proteção.
+    const statusSql = force
+        ? '$3'
+        : `CASE WHEN progress.status = 'completed' OR EXCLUDED.status = 'completed' THEN 'completed' ELSE 'in_progress' END`;
+
     try {
         const result = await db.query(
-            `INSERT INTO progress (student_id, content_id, last_position_seconds, last_accessed_at)
-             VALUES ($1, $2, $3, NOW())
+            `INSERT INTO progress (student_id, content_id, status, last_position_seconds, last_accessed_at)
+             VALUES ($1, $2, $3, $4, NOW())
              ON CONFLICT (student_id, content_id)
-             DO UPDATE SET last_position_seconds = $3, last_accessed_at = NOW()
+             DO UPDATE SET
+                status = ${statusSql},
+                last_position_seconds = $4,
+                last_accessed_at = NOW()
              RETURNING *`,
-            [req.user.id, content_id, Math.max(0, Math.floor(position_seconds))]
+            [req.user.id, content_id, status, Math.max(0, Math.floor(position_seconds))]
         );
         res.json(result.rows[0]);
     } catch (err) {
@@ -928,13 +942,70 @@ app.get('/api/progress/:contentId', authenticateToken, async (req, res) => {
     const { contentId } = req.params;
     try {
         const result = await db.query(
-            'SELECT last_position_seconds, last_accessed_at FROM progress WHERE student_id = $1 AND content_id = $2',
+            'SELECT status, last_position_seconds, last_accessed_at FROM progress WHERE student_id = $1 AND content_id = $2',
             [req.user.id, contentId]
         );
-        res.json(result.rows[0] || { last_position_seconds: 0, last_accessed_at: null });
+        res.json(result.rows[0] || { status: null, last_position_seconds: 0, last_accessed_at: null });
     } catch (err) {
         console.error('Error fetching progress:', err);
         res.status(500).json({ error: 'Failed to fetch progress' });
+    }
+});
+
+// Remove o progresso de um conteúdo, voltando ao estado "não iniciado" — usado
+// quando o aluno desmarca manualmente um conteúdo que nunca chegou a assistir
+// (sem posição salva, então não há "em andamento" pra voltar).
+app.delete('/api/progress/:contentId', authenticateToken, async (req, res) => {
+    const { contentId } = req.params;
+    try {
+        await db.query('DELETE FROM progress WHERE student_id = $1 AND content_id = $2', [req.user.id, contentId]);
+        res.sendStatus(204);
+    } catch (err) {
+        console.error('Error deleting progress:', err);
+        res.status(500).json({ error: 'Failed to delete progress' });
+    }
+});
+
+// Progresso de todos os conteúdos de um curso para o usuário logado — usado
+// pelos estados visuais dos módulos (MEL-05: concluído / em andamento / não
+// iniciado) e pelo cálculo do % de conclusão do curso.
+app.get('/api/courses/:id/progress', authenticateToken, async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT p.content_id, p.status, p.last_position_seconds, p.last_accessed_at
+             FROM progress p
+             JOIN contents c ON p.content_id = c.id
+             JOIN modules m ON c.module_id = m.id
+             WHERE m.course_id = $1 AND p.student_id = $2`,
+            [req.params.id, req.user.id]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching course progress:', err);
+        res.status(500).json({ error: 'Failed to fetch course progress' });
+    }
+});
+
+// Último conteúdo em andamento do aluno, em qualquer curso — alimenta o
+// cartão de retomada ("continue de onde parou") da tela inicial (MEL-05).
+app.get('/api/progress/continue/next', authenticateToken, async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT p.content_id, p.last_position_seconds, p.last_accessed_at,
+                    c.title AS content_title, co.id AS course_id, co.title AS course_title
+             FROM progress p
+             JOIN contents c ON p.content_id = c.id
+             JOIN modules m ON c.module_id = m.id
+             JOIN courses co ON m.course_id = co.id
+             WHERE p.student_id = $1 AND p.status != 'completed'
+             ORDER BY p.last_accessed_at DESC
+             LIMIT 1`,
+            [req.user.id]
+        );
+        res.json(result.rows[0] || null);
+    } catch (err) {
+        console.error('Error fetching continue-watching content:', err);
+        res.status(500).json({ error: 'Failed to fetch continue-watching content' });
     }
 });
 

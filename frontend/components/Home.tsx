@@ -24,15 +24,47 @@ const Home: React.FC<HomeProps> = ({ userRole }) => {
     const { confirm } = useDialog();
     const toast = useToast();
     const isStaff = userRole === UserRole.Professor || userRole === UserRole.Admin;
+    // Cartão de "continue de onde parou": faz sentido para quem consome
+    // conteúdo como aluno — admin também navega e assiste aulas (RNE-002:
+    // "pode visualizar o sistema como Professor ou como Aluno"), só o
+    // professor fica de fora, já que ele só gerencia os próprios cursos.
+    const canResumeContent = userRole !== UserRole.Professor;
 
     const [courses, setCourses] = useState<Course[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [mode, setMode] = useState<Mode>('browse');
     const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
+    const [initialContentId, setInitialContentId] = useState<string | number | undefined>(undefined);
     const [managingStudentsCourse, setManagingStudentsCourse] = useState<Course | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
 
-    useEffect(() => { fetchCourses(); }, []);
+    // Cartão de retomada (MEL-05) — última aula em andamento do aluno, em
+    // qualquer um dos cursos em que está matriculado.
+    interface ContinueData {
+        content_id: string | number;
+        content_title: string;
+        course_id: string | number;
+        course_title: string;
+        last_position_seconds: number;
+    }
+    const [continueData, setContinueData] = useState<ContinueData | null>(null);
+
+    useEffect(() => {
+        fetchCourses();
+        if (canResumeContent) fetchContinueWatching();
+    }, []);
+
+    const fetchContinueWatching = async () => {
+        try {
+            const res = await fetch(`${config.API_URL}/api/progress/continue/next`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const data = await res.json();
+            setContinueData(data || null);
+        } catch (err) {
+            console.error(err);
+        }
+    };
 
     const fetchCourses = async () => {
         setIsLoading(true);
@@ -49,13 +81,14 @@ const Home: React.FC<HomeProps> = ({ userRole }) => {
         }
     };
 
-    const handleOpen = async (courseId: string | number) => {
+    const handleOpen = async (courseId: string | number, contentId?: string | number) => {
         try {
             const res = await fetch(`${config.API_URL}/api/courses/${courseId}`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const data = await res.json();
             setSelectedCourse({ ...data, modules: data.modules || [] });
+            setInitialContentId(contentId);
             setMode('play');
         } catch (err) {
             console.error(err);
@@ -92,7 +125,13 @@ const Home: React.FC<HomeProps> = ({ userRole }) => {
     };
 
     if (mode === 'play' && selectedCourse) {
-        return <CoursePlayer course={selectedCourse} onBack={() => setMode('browse')} />;
+        return (
+            <CoursePlayer
+                course={selectedCourse}
+                initialContentId={initialContentId}
+                onBack={() => { setMode('browse'); if (canResumeContent) fetchContinueWatching(); }}
+            />
+        );
     }
     if (mode === 'edit') {
         return (
@@ -115,7 +154,6 @@ const Home: React.FC<HomeProps> = ({ userRole }) => {
     }
 
     const firstName = user?.name?.split(' ')[0];
-    const continueCourse = !isStaff ? courses[0] : null;
 
     return (
         <div className="space-y-10">
@@ -126,7 +164,7 @@ const Home: React.FC<HomeProps> = ({ userRole }) => {
                         Olá{firstName ? `, ${firstName}` : ''}!
                     </h2>
                     <p className="mt-2 text-base text-ink-600">
-                        {isStaff ? 'Aqui está um resumo rápido dos seus cursos.' : 'Continue de onde parou.'}
+                        {canResumeContent ? 'Continue de onde parou.' : 'Aqui está um resumo rápido dos seus cursos.'}
                     </p>
                 </div>
                 {isStaff && (
@@ -141,9 +179,9 @@ const Home: React.FC<HomeProps> = ({ userRole }) => {
                 )}
             </div>
 
-            {continueCourse && (
+            {continueData && (
                 <div
-                    onClick={() => handleOpen(continueCourse.id)}
+                    onClick={() => handleOpen(continueData.course_id, continueData.content_id)}
                     className="group relative h-64 rounded-modal overflow-hidden cursor-pointer shadow-card hover:shadow-card-hover transition-shadow"
                 >
                     <div className="absolute inset-0 bg-gradient-to-br from-ink-800 to-ink-950" />
@@ -154,10 +192,11 @@ const Home: React.FC<HomeProps> = ({ userRole }) => {
                             Continuar assistindo
                         </span>
                         <h3 className="font-display text-2xl md:text-3xl font-semibold text-white mb-2 line-clamp-1">
-                            {continueCourse.title}
+                            {continueData.course_title}
                         </h3>
                         <p className="text-ink-200 line-clamp-2 max-w-2xl mb-4 text-sm">
-                            {continueCourse.description}
+                            {courses.find(c => String(c.id) === String(continueData.course_id))?.description
+                                || `Retomando: ${continueData.content_title}`}
                         </p>
                         <button className="btn-primary">
                             <Play className="w-4 h-4 fill-current" />
